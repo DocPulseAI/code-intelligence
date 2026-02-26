@@ -1,41 +1,27 @@
-import re
+from src.parsers.tree_sitter_engine import parse_code
+
 
 class JSParser:
-    """
-    Detects React components and hooks.
-    """
-
-    # React Patterns
-    RX_COMPONENT = re.compile(r'function\s+[A-Z][a-zA-Z0-9]*\s*\(|const\s+[A-Z][a-zA-Z0-9]*\s*=\s*\([^\)]*\)\s*=>', re.MULTILINE)
-    RX_HOOK = re.compile(r'\buse[A-Z][a-zA-Z0-9]*\b', re.MULTILINE)
-    RX_JSX_USAGE = re.compile(r'<[A-Z][a-zA-Z0-9]*', re.MULTILINE)
-    RX_FUNCTION = re.compile(r'(?:const|function)\s+(\w+)\s*=?\s*\(', re.MULTILINE)
-
-    # Express API route patterns
-    RX_EXPRESS_ROUTE = re.compile(r'(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*[\'"]([^\'"]+)[\'"]', re.MULTILINE)
-    RX_IMPORT = re.compile(r'(?:import\s+.*?from\s+|require\s*\(\s*)[\'"](.+?)[\'"]', re.MULTILINE)
+    """Compatibility wrapper around Tree-sitter JS parsing."""
 
     @staticmethod
-    def analyze(content):
-        # Detect React components
-        react_components = []
-        if JSParser.RX_COMPONENT.search(content):
-            react_components.append("REACT_COMPONENT")
+    def analyze(content: str) -> dict:
+        parsed = parse_code(content, ".js")
+        features = parsed.get("features", {}) or {}
 
-        # Add API endpoints detection
-        api_endpoints = []
-        for match in JSParser.RX_EXPRESS_ROUTE.finditer(content):
-            api_endpoints.append({
-                "verb": match.group(1).upper(),
-                "route": match.group(2),
-                "line": content[:match.start()].count('\n') + 1
-            })
+        # Backward compatibility with previous key name.
+        if "dependencies" not in features and isinstance(features.get("imports"), list):
+            features["dependencies"] = features["imports"]
 
-        # Return structured format matching TSParser
-        return {
-            "functions": JSParser.RX_FUNCTION.findall(content),
-            "react_components": react_components,
-            "hooks": list(set(JSParser.RX_HOOK.findall(content))),
-            "dependencies": JSParser.RX_IMPORT.findall(content),
-            "api_endpoints": api_endpoints
-        }
+        if "api_endpoints" not in features and isinstance(features.get("api_routes"), list):
+            features["api_endpoints"] = [
+                {
+                    "verb": r.get("method") or r.get("verb") or "GET",
+                    "route": r.get("route") or r.get("path") or "",
+                    "line": r.get("line", 0),
+                }
+                for r in features["api_routes"]
+                if isinstance(r, dict)
+            ]
+
+        return features

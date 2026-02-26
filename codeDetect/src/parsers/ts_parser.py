@@ -1,60 +1,24 @@
-import re
+from src.parsers.tree_sitter_engine import parse_code
+
 
 class TSParser:
-    """Parser for JavaScript/TypeScript files - extracts functions/classes/API endpoints."""
-
-    RX_FUNCTION = re.compile(r'\bfunction\s+([A-Za-z_]\w*)\s*\(', re.MULTILINE)
-    RX_ARROW_FUNCTION = re.compile(
-        r'\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>',
-        re.MULTILINE
-    )
-    RX_CLASS = re.compile(r'\bclass\s+([A-Za-z_]\w*)\b', re.MULTILINE)
-    RX_EXPORT_FUNCTION = re.compile(r'\bexport\s+(?:default\s+)?function\s+([A-Za-z_]\w*)\s*\(', re.MULTILINE)
-    RX_EXPORT_ARROW = re.compile(
-        r'\bexport\s+(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>',
-        re.MULTILINE
-    )
-    RX_EXPORT_CLASS = re.compile(r'\bexport\s+(?:default\s+)?class\s+([A-Za-z_]\w*)\b', re.MULTILINE)
-    # Express API route patterns (US-13: API Impact)
-    RX_EXPRESS_ROUTE = re.compile(r'(?:app|router)\.(get|post|put|delete|patch)\s*\(\s*[\'"]([^\'"]+)[\'"]', re.MULTILINE)
+    """Compatibility wrapper around Tree-sitter TS/JS parsing."""
 
     @staticmethod
-    def _dedupe_order(items):
-        seen = set()
-        result = []
-        for item in items:
-            if item not in seen:
-                seen.add(item)
-                result.append(item)
-        return result
+    def analyze(content: str) -> dict:
+        parsed = parse_code(content, ".ts")
+        features = parsed.get("features", {}) or {}
 
-    @staticmethod
-    def analyze(content):
-        functions = (
-            TSParser.RX_FUNCTION.findall(content) +
-            TSParser.RX_ARROW_FUNCTION.findall(content)
-        )
-        classes = TSParser.RX_CLASS.findall(content)
-        exported_functions = (
-            TSParser.RX_EXPORT_FUNCTION.findall(content) +
-            TSParser.RX_EXPORT_ARROW.findall(content)
-        )
-        exported_classes = TSParser.RX_EXPORT_CLASS.findall(content)
-
-        features = {
-            "functions": TSParser._dedupe_order(functions),
-            "classes": TSParser._dedupe_order(classes),
-            "exported_functions": TSParser._dedupe_order(exported_functions),
-            "exported_classes": TSParser._dedupe_order(exported_classes),
-            "api_endpoints": []
-        }
-
-        # Detect Express routes (US-13: API Impact)
-        for match in TSParser.RX_EXPRESS_ROUTE.finditer(content):
-            features["api_endpoints"].append({
-                "verb": match.group(1).upper(),
-                "route": match.group(2),
-                "line": content[:match.start()].count('\n') + 1
-            })
+        # Keep backward compatibility for callers expecting api_endpoints.
+        if "api_endpoints" not in features and isinstance(features.get("api_routes"), list):
+            features["api_endpoints"] = [
+                {
+                    "verb": r.get("method") or r.get("verb") or "GET",
+                    "route": r.get("route") or r.get("path") or "",
+                    "line": r.get("line", 0),
+                }
+                for r in features["api_routes"]
+                if isinstance(r, dict)
+            ]
 
         return features

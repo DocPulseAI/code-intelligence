@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import shutil
+import importlib.util
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -41,6 +42,45 @@ if not LOG.handlers:
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s"
     )
+
+
+def _check_runtime_dependencies() -> dict:
+    """Startup self-check for critical runtime dependencies."""
+    checks: dict[str, dict] = {}
+
+    def _mark(module_name: str) -> bool:
+        ok = importlib.util.find_spec(module_name) is not None
+        checks[module_name] = {"ok": ok}
+        return ok
+
+    tree_sitter_ok = _mark("tree_sitter")
+    tree_sitter_lang_ok = _mark("tree_sitter_languages")
+    protobuf_ok = _mark("google.protobuf")
+    gitpython_ok = _mark("git")
+
+    process_pool_ok = True
+    process_pool_mode = "process_pool"
+    try:
+        if hasattr(os, "sysconf"):
+            # Mirrors the ProcessPool semaphore capability check in restricted sandboxes.
+            _ = os.sysconf("SC_SEM_NSEMS_MAX")
+    except Exception as e:
+        process_pool_ok = False
+        process_pool_mode = "sequential_fallback"
+        checks["process_pool"] = {"ok": False, "detail": str(e)}
+    else:
+        checks["process_pool"] = {"ok": True}
+
+    overall_ok = tree_sitter_ok and tree_sitter_lang_ok and protobuf_ok and gitpython_ok
+    return {
+        "overall_ok": overall_ok,
+        "process_pool_mode": process_pool_mode,
+        "checks": checks,
+    }
+
+
+DEPENDENCY_STATUS = _check_runtime_dependencies()
+LOG.info("Startup dependency check: %s", json.dumps(DEPENDENCY_STATUS))
 
 
 def _parse_boolean_field(data: dict, field_name: str, default: bool = False):
@@ -125,8 +165,13 @@ def root():
         "service": "Code Change Detector API",
         "version": "1.0.0",
         "status": "healthy",
+        "dependency_status": {
+            "overall_ok": DEPENDENCY_STATUS["overall_ok"],
+            "process_pool_mode": DEPENDENCY_STATUS["process_pool_mode"],
+        },
         "endpoints": {
             "health": "/health",
+            "health_dependencies": "/health/dependencies",
             "docs": "/docs/",
             "analyze": "/analyze",
             "analyze_local": "/analyze/local"
@@ -159,8 +204,33 @@ def health_check():
     return jsonify({
         "status": "healthy",
         "service": "Code Change Detector API",
+        "dependency_status": {
+            "overall_ok": DEPENDENCY_STATUS["overall_ok"],
+            "process_pool_mode": DEPENDENCY_STATUS["process_pool_mode"],
+        },
         "timestamp": datetime.utcnow().isoformat()
     })
+
+
+@app.route('/health/dependencies', methods=['GET'])
+def health_dependencies():
+    """
+    Detailed dependency health endpoint
+    ---
+    tags:
+      - System
+    responses:
+      200:
+        description: Dependency status details
+    """
+    payload = {
+        "status": "ok" if DEPENDENCY_STATUS["overall_ok"] else "degraded",
+        "service": "Code Change Detector API",
+        "timestamp": datetime.utcnow().isoformat(),
+        "dependencies": DEPENDENCY_STATUS,
+    }
+    status_code = 200 if DEPENDENCY_STATUS["overall_ok"] else 503
+    return jsonify(payload), status_code
 
 @app.route('/analyze', methods=['POST'])
 def analyze():

@@ -3,6 +3,7 @@ Tree-sitter based parsing engine for multi-language AST analysis.
 """
 
 import os
+import re
 from typing import Dict, List, Optional, Any
 
 # Try to import tree-sitter, fall back to regex if unavailable
@@ -12,6 +13,8 @@ try:
     TREE_SITTER_AVAILABLE = True
 except ImportError:
     TREE_SITTER_AVAILABLE = False
+    Language = Any  # type: ignore
+    Node = Any  # type: ignore
     print("Warning: tree-sitter not installed. Falling back to regex parsing.")
 
 
@@ -37,6 +40,18 @@ class TreeSitterEngine:
         '.cs': 'c_sharp',
         '.php': 'php',
     }
+    RX_JS_FUNCTION = re.compile(r'\bfunction\s+([A-Za-z_]\w*)\s*\(', re.MULTILINE)
+    RX_JS_ARROW_FUNCTION = re.compile(
+        r'\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>',
+        re.MULTILINE
+    )
+    RX_JS_CLASS = re.compile(r'\bclass\s+([A-Za-z_]\w*)\b', re.MULTILINE)
+    RX_JS_EXPORT_FUNCTION = re.compile(r'\bexport\s+(?:default\s+)?function\s+([A-Za-z_]\w*)\s*\(', re.MULTILINE)
+    RX_JS_EXPORT_ARROW = re.compile(
+        r'\bexport\s+(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>',
+        re.MULTILINE
+    )
+    RX_JS_EXPORT_CLASS = re.compile(r'\bexport\s+(?:default\s+)?class\s+([A-Za-z_]\w*)\b', re.MULTILINE)
 
     def __init__(self):
         self.parser = Parser() if TREE_SITTER_AVAILABLE else None
@@ -107,11 +122,44 @@ class TreeSitterEngine:
             else:
                 result["features"] = self._extract_generic_features(tree.root_node, code)
 
+            # Backward-compatible JS/TS syntax behavior.
+            if not result["syntax_error"] and lang_name in ['javascript', 'typescript', 'tsx']:
+                if self._legacy_js_syntax_error(code):
+                    result["syntax_error"] = True
+
         except Exception as e:
             print(f"Parsing error: {e}")
             result["syntax_error"] = True
 
         return result
+
+    def _legacy_js_syntax_error(self, content: str) -> bool:
+        """Heuristic JS/TS syntax checks used by legacy parser flow."""
+        return (
+            not self._check_balanced(content, '{', '}') or
+            not self._check_balanced(content, '[', ']') or
+            not self._check_balanced(content, '(', ')') or
+            (content.count('`') % 2 != 0)
+        )
+
+    def _check_balanced(self, content: str, open_char: str, close_char: str) -> bool:
+        """Check if characters are balanced, accounting for strings/comments."""
+        cleaned = re.sub(r'"[^"\\]*(?:\\.[^"\\]*)*"', '""', content)
+        cleaned = re.sub(r"'[^'\\]*(?:\\.[^'\\]*)*'", "''", cleaned)
+        cleaned = re.sub(r'`[^`\\]*(?:\\.[^`\\]*)*`', '``', cleaned)
+        cleaned = re.sub(r'//.*$', '', cleaned, flags=re.MULTILINE)
+        cleaned = re.sub(r'/\*.*?\*/', '', cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r'#.*$', '', cleaned, flags=re.MULTILINE)
+
+        count = 0
+        for char in cleaned:
+            if char == open_char:
+                count += 1
+            elif char == close_char:
+                count -= 1
+            if count < 0:
+                return False
+        return count == 0
 
     def _collect_error_nodes(self, node: 'Node', errors: List = None) -> List[Dict]:
         """Collect all ERROR nodes in the tree."""
@@ -228,103 +276,153 @@ class TreeSitterEngine:
         return ""
 
     def _extract_js_features(self, root: 'Node', code: str) -> Dict[str, Any]:
-        """Extract JS/TS functions, exports, and React components."""
+        """Extract JS/TS features in backward-compatible schema."""
         features = {
             "functions": [],
             "classes": [],
-            "exports": [],
-            "react_components": [],
-            "hooks": [],
-            "imports": [],
-            "api_routes": [],
-            "comments": [],
-            "complexity_nodes": 0
+            "exported_functions": [],
+            "exported_classes": [],
+            "api_endpoints": []
         }
-
         self._traverse_js(root, code, features)
+        # Preserve legacy symbol extraction behavior/ordering for compatibility.
+        legacy_symbols = self._extract_legacy_js_symbols(code)
+        features["functions"] = legacy_symbols["functions"]
+        features["classes"] = legacy_symbols["classes"]
+        features["exported_functions"] = legacy_symbols["exported_functions"]
+        features["exported_classes"] = legacy_symbols["exported_classes"]
+
+        features["api_endpoints"] = self._dedupe_endpoint_list(features["api_endpoints"])
         return features
+
+    def _extract_legacy_js_symbols(self, code: str) -> Dict[str, List[str]]:
+        """Compatibility symbol extraction matching previous TS parser behavior."""
+        functions = self.RX_JS_FUNCTION.findall(code) + self.RX_JS_ARROW_FUNCTION.findall(code)
+        classes = self.RX_JS_CLASS.findall(code)
+        exported_functions = self.RX_JS_EXPORT_FUNCTION.findall(code) + self.RX_JS_EXPORT_ARROW.findall(code)
+        exported_classes = self.RX_JS_EXPORT_CLASS.findall(code)
+        return {
+            "functions": self._dedupe_order(functions),
+            "classes": self._dedupe_order(classes),
+            "exported_functions": self._dedupe_order(exported_functions),
+            "exported_classes": self._dedupe_order(exported_classes),
+        }
 
     def _traverse_js(self, node: 'Node', code: str, features: Dict):
         """Recursively traverse JS/TS AST."""
-
-        # Function declarations
         if node.type == 'function_declaration':
             name_node = node.child_by_field_name('name')
             if name_node:
-                func_name = self._get_node_text(name_node, code)
-                features["functions"].append(func_name)
+                features["functions"].append(self._get_node_text(name_node, code))
 
-                # Check if React component (PascalCase + returns JSX)
-                if func_name[0].isupper() and self._contains_jsx(node):
-                    features["react_components"].append(func_name)
-
-        # Arrow functions (const Fn = () => {})
         elif node.type == 'lexical_declaration':
             for child in node.children:
-                if child.type == 'variable_declarator':
-                    name_node = child.child_by_field_name('name')
-                    value_node = child.child_by_field_name('value')
+                if child.type != 'variable_declarator':
+                    continue
+                value_node = child.child_by_field_name('value')
+                if value_node and value_node.type == 'arrow_function':
+                    func_name = self._extract_js_variable_name(child, code)
+                    if func_name:
+                        features["functions"].append(func_name)
 
-                    if name_node and value_node:
-                        func_name = self._get_node_text(name_node, code)
-
-                        if value_node.type == 'arrow_function':
-                            features["functions"].append(func_name)
-
-                            # Check React component
-                            if func_name[0].isupper() and self._contains_jsx(value_node):
-                                features["react_components"].append(func_name)
-
-        # Class declarations
         elif node.type == 'class_declaration':
             name_node = node.child_by_field_name('name')
             if name_node:
                 features["classes"].append(self._get_node_text(name_node, code))
 
-        # Export statements
         elif node.type == 'export_statement':
-            features["exports"].append(self._get_node_text(node, code)[:100] + "...")
+            self._extract_exported_js_declarations(node, code, features)
 
-        # Import statements
-        elif node.type == 'import_statement':
-            source = None
-            for child in node.children:
-                if child.type == 'string':
-                    source = self._get_node_text(child, code).strip('"\'')
-            if source:
-                features["imports"].append(source)
-
-        # React hooks
         elif node.type == 'call_expression':
-            func = node.child_by_field_name('function')
-            if func and func.type == 'identifier':
-                func_name = self._get_node_text(func, code)
-                if func_name.startswith('use') and func_name[3:4].isupper():
-                    if func_name not in features["hooks"]:
-                        features["hooks"].append(func_name)
+            endpoint = self._extract_express_route(node, code)
+            if endpoint:
+                features["api_endpoints"].append(endpoint)
 
-        # Comments
-        elif node.type == 'comment':
-            features["comments"].append(self._get_node_text(node, code).strip())
-
-        # Complexity nodes
-        elif node.type in ['if_statement', 'for_statement', 'for_in_statement',
-                          'while_statement', 'do_statement', 'switch_statement',
-                          'try_statement', 'catch_clause', 'ternary_expression']:
-            features["complexity_nodes"] += 1
-
-        # Recurse
         for child in node.children:
             self._traverse_js(child, code, features)
 
-    def _contains_jsx(self, node: 'Node') -> bool:
-        """Check if node contains JSX elements."""
-        if node.type in ['jsx_element', 'jsx_self_closing_element', 'jsx_fragment']:
-            return True
-        for child in node.children:
-            if self._contains_jsx(child):
-                return True
-        return False
+    def _extract_exported_js_declarations(self, export_node: 'Node', code: str, features: Dict):
+        """Extract exported function/class names from export statements."""
+        for child in export_node.children:
+            if child.type == 'function_declaration':
+                name_node = child.child_by_field_name('name')
+                if name_node:
+                    features["exported_functions"].append(self._get_node_text(name_node, code))
+            elif child.type == 'class_declaration':
+                name_node = child.child_by_field_name('name')
+                if name_node:
+                    features["exported_classes"].append(self._get_node_text(name_node, code))
+            elif child.type == 'lexical_declaration':
+                for decl in child.children:
+                    if decl.type != 'variable_declarator':
+                        continue
+                    value_node = decl.child_by_field_name('value')
+                    if value_node and value_node.type == 'arrow_function':
+                        func_name = self._extract_js_variable_name(decl, code)
+                        if func_name:
+                            features["exported_functions"].append(func_name)
+
+    def _extract_express_route(self, call_node: 'Node', code: str) -> Optional[Dict[str, Any]]:
+        """Extract Express-style app/router endpoint calls."""
+        func_node = call_node.child_by_field_name('function')
+        args_node = call_node.child_by_field_name('arguments')
+        if not func_node or not args_node or func_node.type != 'member_expression':
+            return None
+
+        object_node = func_node.child_by_field_name('object')
+        property_node = func_node.child_by_field_name('property')
+        if not object_node or not property_node:
+            return None
+
+        target = self._get_node_text(object_node, code)
+        verb = self._get_node_text(property_node, code).lower()
+        if target not in {'app', 'router'} or verb not in {'get', 'post', 'put', 'delete', 'patch'}:
+            return None
+
+        route = ""
+        for arg in args_node.children:
+            if arg.type in {'string', 'string_fragment'}:
+                route = self._get_node_text(arg, code).strip('"\'')
+                break
+
+        return {
+            "verb": verb.upper(),
+            "route": route,
+            "line": call_node.start_point[0] + 1
+        }
+
+    def _extract_js_variable_name(self, declarator_node: 'Node', code: str) -> str:
+        """Extract variable name robustly from JS variable_declarator."""
+        name_node = declarator_node.child_by_field_name('name')
+        if name_node:
+            name_text = self._get_node_text(name_node, code).strip()
+            if re.match(r'^[A-Za-z_]\w*$', name_text):
+                return name_text
+
+        decl_text = self._get_node_text(declarator_node, code)
+        match = re.match(r'\s*([A-Za-z_]\w*)\s*=', decl_text)
+        return match.group(1) if match else ""
+
+    @staticmethod
+    def _dedupe_order(items: List[str]) -> List[str]:
+        seen = set()
+        result: List[str] = []
+        for item in items:
+            if item not in seen:
+                seen.add(item)
+                result.append(item)
+        return result
+
+    @staticmethod
+    def _dedupe_endpoint_list(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        seen = set()
+        result: List[Dict[str, Any]] = []
+        for item in items:
+            key = (item.get("verb"), item.get("route"), item.get("line"))
+            if key not in seen:
+                seen.add(key)
+                result.append(item)
+        return result
 
     def _extract_python_features(self, root: 'Node', code: str) -> Dict[str, Any]:
         """Extract Python functions, classes, and decorators."""

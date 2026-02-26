@@ -5,11 +5,13 @@
 GitPython>=3.1.40
 
 # Tree-sitter AST parsing (US-6, US-8, US-10)
-tree-sitter>=0.21.0
-tree-sitter-languages>=1.10.0
+# Pinned for API compatibility between runtime and bundled grammars.
+tree-sitter==0.21.3
+tree-sitter-languages==1.10.2
 
 # Configuration
 PyYAML>=6.0.1
+protobuf>=5.27.0
 
 # JSON handling (built-in, listed for documentation)
 # json - standard library

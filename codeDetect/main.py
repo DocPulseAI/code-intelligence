@@ -7,15 +7,18 @@ import re
 import subprocess
 import shutil
 import logging
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from src.git_manager import GitManager
 from git import InvalidGitRepositoryError
 from src.file_filter import FileFilter, ConfigLoader
 from src.scorers import SeverityCalculator
-from src.syntax_checker import SyntaxChecker
-from src.parsers.java_parser import JavaParser
-from src.parsers.ts_parser import TSParser
 from src.parsers.schema_detector import SchemaDetector
-from src.parsers.python_parser import PythonParser
+from src.parsers.tree_sitter_engine import parse_code, TreeSitterEngine
+from src.indexing.scip import extract_scip_symbols
+from src.serialization.protobuf_serializer import serialize_ast_record
+from src.baseline_store import BaselineStore
+from src.breaking_change_engine import compare_reports
+from src.risk_scoring import score_report_risk
 
 LOG = logging.getLogger("epic1")
 if not LOG.handlers:
@@ -39,6 +42,95 @@ def _redact_token(token: Optional[str]) -> str:
     if len(token) <= 6:
         return "***"
     return f"{token[:3]}...{token[-3:]}"
+
+
+def _detect_language_from_extension(ext: str) -> Optional[str]:
+    """Map file extension to language name used in reports."""
+    lang = TreeSitterEngine.LANGUAGE_MAP.get(ext)
+    if not lang:
+        return None
+    if lang == "javascript":
+        return "javascript"
+    if lang in {"typescript", "tsx"}:
+        return "typescript"
+    return lang
+
+
+def _normalize_api_endpoints(features: dict) -> list[dict]:
+    """
+    Normalize endpoint-like entries into a common shape.
+    Tree-sitter extractors may emit either api_endpoints or api_routes.
+    """
+    endpoints: list[dict] = []
+
+    raw_endpoints = features.get("api_endpoints", [])
+    if isinstance(raw_endpoints, list):
+        for ep in raw_endpoints:
+            if isinstance(ep, dict):
+                endpoints.append(ep)
+
+    raw_routes = features.get("api_routes", [])
+    if isinstance(raw_routes, list):
+        for route_item in raw_routes:
+            if not isinstance(route_item, dict):
+                continue
+            endpoints.append({
+                "verb": route_item.get("method") or route_item.get("verb") or "GET",
+                "route": route_item.get("route") or route_item.get("path") or "",
+                "line": route_item.get("line", 0),
+                "handler": route_item.get("handler") or ""
+            })
+
+    return endpoints
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        value = int(os.environ.get(name, str(default)))
+        return value if value > 0 else default
+    except Exception:
+        return default
+
+
+def _sanitize_api_endpoints(endpoints: list[dict]) -> list[dict]:
+    """Keep only deterministically valid endpoint entries."""
+    valid_methods = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"}
+    out: list[dict] = []
+    seen = set()
+    for ep in endpoints:
+        if not isinstance(ep, dict):
+            continue
+        method = str(ep.get("verb") or ep.get("method") or "GET").upper().strip()
+        route = str(ep.get("route") or ep.get("path") or "").strip()
+        line = int(ep.get("line", 0) or 0)
+        if method not in valid_methods or not route.startswith("/"):
+            continue
+        key = (method, route, line)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"verb": method, "route": route, "line": line, "handler": ep.get("handler") or ""})
+    return out
+
+
+def _parse_and_index_file(file_path: str, ext: str, content: str) -> dict:
+    """
+    CPU-bound parsing/indexing task suitable for ProcessPool execution.
+    Returns parse result + SCIP symbols + protobuf payload size.
+    """
+    language = _detect_language_from_extension(ext)
+    parse_result = parse_code(content, ext)
+    syntax_error = bool(parse_result.get("syntax_error"))
+    features = parse_result.get("features", {}) or {}
+    symbols = extract_scip_symbols(file_path, language, features)
+    payload = serialize_ast_record(file_path, language, syntax_error, features, symbols)
+    return {
+        "file": file_path,
+        "language": language,
+        "parse_result": parse_result,
+        "symbol_count": len(symbols),
+        "protobuf_size_bytes": len(payload),
+    }
 
 
 def _build_auth_url(repo_url: str, github_token: Optional[str]) -> str:
@@ -148,6 +240,14 @@ def _build_fallback_report(repo_path_or_url: str,
         "api_contract": {
             "endpoints": []
         },
+        "indexing": {
+            "format": "SCIP",
+            "symbol_count": 0
+        },
+        "serialization": {
+            "format": "protobuf",
+            "total_payload_bytes": 0
+        },
         "extraction_quality": {
             "api_endpoint_count": 0,
             "invalid_endpoint_count": 0,
@@ -167,6 +267,12 @@ def _dedupe_order(items: list[str]) -> list[str]:
             seen.add(item)
             result.append(item)
     return result
+
+
+def _project_id_from_context(context: dict) -> str:
+    repository = str(context.get("repository", "")).strip() or "unknown-repo"
+    author = str(context.get("author", "")).strip()
+    return f"{author}/{repository}" if author else repository
 
 
 def _classify_component(file_path: str, content: Optional[str]) -> str:
@@ -881,15 +987,41 @@ def _build_doc_contract(report: dict) -> dict:
     }
 
 
-def _to_canonical_v3(working: dict, status: str = "success") -> dict:
+def _to_canonical_v3(working: dict,
+                     status: str = "success",
+                     project_id: Optional[str] = None,
+                     baseline_commit: Optional[str] = None,
+                     breaking_changes: Optional[list[dict]] = None,
+                     risk: Optional[dict] = None) -> dict:
     payload = {k: v for k, v in working.items() if k not in {"schema_version", "status", "meta", "report"}}
     payload["doc_contract"] = _build_doc_contract(payload)
-    return {
+    context = payload.get("context", {}) if isinstance(payload.get("context"), dict) else {}
+    resolved_project_id = project_id or _project_id_from_context(context)
+    resolved_branch = str(context.get("branch", "unknown"))
+    resolved_commit = str(context.get("full_sha") or context.get("commit_sha") or "")
+    resolved_breaking = list(breaking_changes or [])
+    resolved_risk = risk or {
+        "severity": payload.get("analysis_summary", {}).get("highest_severity", "PATCH"),
+        "statistics": {"total_changes": 0, "major": 0, "minor": 0, "patch": 0},
+        "deterministic": True,
+    }
+    top = {
         "schema_version": "epic1-impact/v3",
+        "version": "2.0",
         "status": status,
         "meta": working.get("meta", {}),
+        "project_id": resolved_project_id,
+        "branch": resolved_branch,
+        "commit_sha": resolved_commit,
+        "baseline_commit": baseline_commit,
+        "analysis_summary": payload.get("analysis_summary", {}),
+        "breaking_changes": resolved_breaking,
+        "statistics": resolved_risk.get("statistics", {}),
+        "severity": resolved_risk.get("severity", "PATCH"),
+        "deterministic": bool(resolved_risk.get("deterministic", True)),
         "report": payload
     }
+    return top
 
 
 def _classify_intent(message: Optional[str], security_features: list[str]) -> str:
@@ -1325,15 +1457,48 @@ def _validate_report_schema(report: dict) -> tuple[bool, str]:
     if not isinstance(report, dict):
         return False, "Report must be an object"
 
-    required_top = {"schema_version", "status", "meta", "report"}
+    required_top = {
+        "schema_version",
+        "version",
+        "status",
+        "meta",
+        "project_id",
+        "branch",
+        "commit_sha",
+        "baseline_commit",
+        "analysis_summary",
+        "breaking_changes",
+        "statistics",
+        "severity",
+        "deterministic",
+        "report",
+    }
     if set(report.keys()) != required_top:
-        return False, "Top-level keys must be exactly schema_version,status,meta,report"
+        return False, "Top-level keys mismatch for v2+v3 contract"
     if report.get("schema_version") != "epic1-impact/v3":
         return False, "schema_version must be epic1-impact/v3"
+    if report.get("version") != "2.0":
+        return False, "version must be 2.0"
     if report.get("status") not in {"success", "partial"}:
         return False, "status must be success|partial"
     if not isinstance(report.get("meta"), dict):
         return False, "meta must be an object"
+    if not isinstance(report.get("project_id"), str):
+        return False, "project_id must be a string"
+    if not isinstance(report.get("branch"), str):
+        return False, "branch must be a string"
+    if report.get("baseline_commit") is not None and not isinstance(report.get("baseline_commit"), str):
+        return False, "baseline_commit must be null|string"
+    if not isinstance(report.get("analysis_summary"), dict):
+        return False, "top-level analysis_summary must be an object"
+    if not isinstance(report.get("breaking_changes"), list):
+        return False, "top-level breaking_changes must be an array"
+    if not isinstance(report.get("statistics"), dict):
+        return False, "top-level statistics must be an object"
+    if report.get("severity") not in {"PATCH", "MINOR", "MAJOR"}:
+        return False, "top-level severity must be PATCH|MINOR|MAJOR"
+    if not isinstance(report.get("deterministic"), bool):
+        return False, "top-level deterministic must be boolean"
     report_obj = report.get("report")
     if not isinstance(report_obj, dict):
         return False, "report must be an object"
@@ -1347,6 +1512,8 @@ def _validate_report_schema(report: dict) -> tuple[bool, str]:
         return False, "doc_contract must be an object"
 
     summary = report_obj["analysis_summary"]
+    if report.get("analysis_summary") != summary:
+        return False, "Top-level analysis_summary must match report.analysis_summary"
     summary_keys = {"total_files", "highest_severity", "breaking_changes_detected"}
     if not summary_keys.issubset(summary.keys()):
         return False, "analysis_summary missing required keys"
@@ -1374,6 +1541,23 @@ def _validate_report_schema(report: dict) -> tuple[bool, str]:
             return False, "Change syntax_error must be a boolean"
         if not isinstance(item["features"], dict):
             return False, "Change features must be an object"
+
+    stats = report.get("statistics", {})
+    stat_keys = {"total_changes", "major", "minor", "patch"}
+    if not stat_keys.issubset(stats.keys()):
+        return False, "statistics missing required keys"
+    for key in stat_keys:
+        if not isinstance(stats.get(key), int):
+            return False, f"statistics.{key} must be an integer"
+
+    for descriptor in report.get("breaking_changes", []):
+        if not isinstance(descriptor, dict):
+            return False, "breaking_changes entries must be objects"
+        req = {"type", "entity", "file", "severity", "description", "id"}
+        if not req.issubset(descriptor.keys()):
+            return False, "breaking_changes entry missing required keys"
+        if descriptor.get("severity") not in {"PATCH", "MINOR", "MAJOR"}:
+            return False, "breaking_changes.severity must be PATCH|MINOR|MAJOR"
 
     if "documentation_context" in report_obj:
         doc_ctx = report_obj["documentation_context"]
@@ -1542,6 +1726,10 @@ def main():
         "api_contract": {
             "endpoints": []
         },
+        "guardrails": {
+            "applied": [],
+            "limits": {}
+        },
         "extraction_quality": {
             "api_endpoint_count": 0,
             "invalid_endpoint_count": 0,
@@ -1552,10 +1740,33 @@ def main():
 
     try:
         _preflight_validate(repo_path, github_token, branch, skip_remote_preflight=skip_remote_preflight)
+        baseline_store = BaselineStore()
+        baseline_report_payload = None
+        baseline_commit = None
+        project_id = "unknown-project"
+        current_commit_sha = ""
         # Use context manager to ensure cleanup
         try:
             with GitManager(repo_path, github_token, branch) as git_mgr:
                 report["context"] = git_mgr.get_metadata()
+                project_id = _project_id_from_context(report["context"])
+                current_commit_sha = str(
+                    report["context"].get("full_sha")
+                    or report["context"].get("commit_sha")
+                    or ""
+                )
+                baseline_doc = baseline_store.load_baseline(project_id, branch, current_commit_sha)
+                if isinstance(baseline_doc, dict):
+                    baseline_report_payload = baseline_doc.get("report", baseline_doc)
+                    if isinstance(baseline_report_payload, dict):
+                        baseline_context = baseline_report_payload.get("context", {})
+                        if isinstance(baseline_context, dict):
+                            baseline_commit = str(
+                                baseline_context.get("full_sha")
+                                or baseline_context.get("commit_sha")
+                                or ""
+                            ) or None
+
                 config_path = os.path.join(git_mgr.repo_path, "config.yaml")
                 config = ConfigLoader.load(config_path)
                 additional_ignores = config.get("ignore_patterns", [])
@@ -1564,6 +1775,21 @@ def main():
                 changes_list = git_mgr.list_all_files() if new_user else git_mgr.get_changed_files()
                 if changes_list and changes_list[0].get("change_type") == "ERROR":
                     raise AnalysisError("diff", changes_list[0].get("error", "Failed to compute diff"), True)
+                changes_list = sorted(changes_list, key=lambda c: c.get("path", ""))
+
+                max_files = _env_int("CODE_DETECT_MAX_FILES", 12000)
+                max_file_bytes = _env_int("CODE_DETECT_MAX_FILE_BYTES", 1024 * 1024)
+                max_total_parse_bytes = _env_int("CODE_DETECT_MAX_TOTAL_PARSE_BYTES", 250 * 1024 * 1024)
+                report["guardrails"]["limits"] = {
+                    "max_files": max_files,
+                    "max_file_bytes": max_file_bytes,
+                    "max_total_parse_bytes": max_total_parse_bytes
+                }
+                if len(changes_list) > max_files:
+                    report["guardrails"]["applied"].append(
+                        f"Truncated candidate file list from {len(changes_list)} to {max_files}"
+                    )
+                    changes_list = changes_list[:max_files]
 
                 severity_rank = {"PATCH": 1, "MINOR": 2, "MAJOR": 3}
                 max_severity = 0
@@ -1585,6 +1811,10 @@ def main():
                 docker_changed = False
                 test_files_changed = 0
                 has_non_test_changes = False
+                parse_inputs: list[dict] = []
+                symbol_count_total = 0
+                protobuf_payload_total = 0
+                parse_bytes_total = 0
 
                 for change in changes_list:
                     file_path = change["path"]
@@ -1599,95 +1829,141 @@ def main():
                         "is_binary": False,
                         "syntax_error": False,
                         "features": {},
-                        "component": _classify_component(file_path, None)
+                        "component": _classify_component(file_path, None),
                     }
 
+                    if FileFilter.is_known_binary_extension(file_path):
+                        record["is_binary"] = True
+                        record["note"] = "Skipped binary file analysis"
+                        component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
+                        report["changes"].append(record)
+                        continue
+
+                    content = git_mgr.get_file_content(file_path)
+                    if content is None:
+                        record["is_binary"] = True
+                        record["note"] = "Skipped binary file analysis"
+                        component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
+                        report["changes"].append(record)
+                        continue
+                    content_bytes = len(content.encode("utf-8", errors="ignore"))
+                    if content_bytes > max_file_bytes:
+                        record["note"] = (
+                            f"Skipped oversized file ({content_bytes} bytes > max_file_bytes={max_file_bytes})"
+                        )
+                        component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
+                        report["changes"].append(record)
+                        report["guardrails"]["applied"].append(f"Oversized file skipped: {file_path}")
+                        continue
+                    if parse_bytes_total + content_bytes > max_total_parse_bytes:
+                        record["note"] = (
+                            "Skipped due to total parse byte budget exhaustion "
+                            f"({max_total_parse_bytes} bytes)"
+                        )
+                        component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
+                        report["changes"].append(record)
+                        continue
+                    parse_bytes_total += content_bytes
+
+                    ext = os.path.splitext(file_path)[1].lower()
+                    parse_inputs.append({
+                        "change": change,
+                        "file_path": file_path,
+                        "ext": ext,
+                        "content": content,
+                        "record": record,
+                    })
+
+                parse_outputs: dict[str, dict] = {}
+                if parse_inputs:
+                    max_workers = max(1, int(os.environ.get("CODE_DETECT_PARSE_WORKERS", str(max(1, (os.cpu_count() or 2) - 1)))))
+                    if max_workers > 1 and len(parse_inputs) > 1:
+                        try:
+                            with ProcessPoolExecutor(max_workers=max_workers) as executor:
+                                future_map = {
+                                    executor.submit(_parse_and_index_file, item["file_path"], item["ext"], item["content"]): item["file_path"]
+                                    for item in parse_inputs
+                                }
+                                for future in as_completed(future_map):
+                                    fpath = future_map[future]
+                                    try:
+                                        parse_outputs[fpath] = future.result()
+                                    except Exception as e:
+                                        parse_outputs[fpath] = {"file": fpath, "error": str(e)}
+                        except Exception as pool_error:
+                            LOG.warning("Process pool unavailable, falling back to sequential parse: %s", pool_error)
+                            for item in parse_inputs:
+                                fpath = item["file_path"]
+                                try:
+                                    parse_outputs[fpath] = _parse_and_index_file(fpath, item["ext"], item["content"])
+                                except Exception as e:
+                                    parse_outputs[fpath] = {"file": fpath, "error": str(e)}
+                    else:
+                        for item in parse_inputs:
+                            fpath = item["file_path"]
+                            try:
+                                parse_outputs[fpath] = _parse_and_index_file(fpath, item["ext"], item["content"])
+                            except Exception as e:
+                                parse_outputs[fpath] = {"file": fpath, "error": str(e)}
+
+                for item in parse_inputs:
+                    change = item["change"]
+                    file_path = item["file_path"]
+                    ext = item["ext"]
+                    content = item["content"]
+                    record = item["record"]
                     try:
-                        # A. Binary/Safety Check
-                        if FileFilter.is_known_binary_extension(file_path):
-                            record["is_binary"] = True
-                            record["note"] = "Skipped binary file analysis"
-                            component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
-                            report["changes"].append(record)
-                            continue
+                        parsed = parse_outputs.get(file_path, {})
+                        if parsed.get("error"):
+                            raise ValueError(parsed["error"])
 
-                        # B. Read Content
-                        content = git_mgr.get_file_content(file_path)
-                        if content is None:
-                            record["is_binary"] = True
-                            record["note"] = "Skipped binary file analysis"
-                            component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
-                            report["changes"].append(record)
-                            continue
-                        ext = os.path.splitext(file_path)[1].lower()
-
-                        # C. Syntax Check
-                        if SyntaxChecker.check(file_path, content):
-                            record["syntax_error"] = True
-                            record["features"]["note"] = "Partial extraction due to syntax error"
-
-                        # D. Parse Features
-                        features = {}
-                        if ext == '.java':
-                            record["language"] = "java"
-                            features = JavaParser.analyze(content)
-
-                        # Handle JS and TS files using the TSParser
-                        elif ext in ['.ts', '.tsx', '.js', '.jsx']:
-                            record["language"] = "typescript" if 'ts' in ext else "javascript"
-                            features = TSParser.analyze(content)
-
-                        elif ext == '.py':
-                            record["language"] = "python"
-                            features = PythonParser.analyze(content)
-
-                        # Merge notes if syntax error existed
+                        record["language"] = parsed.get("language")
+                        parse_result = parsed.get("parse_result", {}) or {}
+                        record["syntax_error"] = bool(parse_result.get("syntax_error"))
+                        features = parse_result.get("features", {}) or {}
                         if record["syntax_error"]:
-                            features["note"] = record["features"]["note"]
+                            features["note"] = "Partial extraction due to syntax error"
+                            if parse_result.get("error_nodes"):
+                                record["error_nodes"] = parse_result["error_nodes"]
 
-                        # Collect endpoint candidates for v2 API contract
-                        api_endpoints = features.get("api_endpoints", [])
-                        if isinstance(api_endpoints, list):
-                            for ep in api_endpoints:
-                                if not isinstance(ep, dict):
-                                    continue
-                                route = ep.get("route") or ep.get("path") or ""
-                                method = ep.get("verb") or ep.get("method") or "GET"
-                                line = ep.get("line", 0)
-                                api_contract_candidates.append({
-                                    "method": method,
-                                    "path": route,
-                                    "summary": "",
-                                    "description": f"Detected endpoint from source analysis in {file_path}",
-                                    "source_file": file_path,
-                                    "line_start": line,
-                                    "line_end": line,
-                                    "handler": ep.get("handler") or "",
-                                    "content": content,
-                                    "features": features,
-                                    "warnings": []
-                                })
+                        symbol_count_total += int(parsed.get("symbol_count", 0))
+                        protobuf_payload_total += int(parsed.get("protobuf_size_bytes", 0))
 
-                        # Component refinement with content
+                        api_endpoints = _sanitize_api_endpoints(_normalize_api_endpoints(features))
+                        features["api_endpoints"] = api_endpoints
+                        for ep in api_endpoints:
+                            route = ep.get("route") or ep.get("path") or ""
+                            method = ep.get("verb") or ep.get("method") or "GET"
+                            line = ep.get("line", 0)
+                            api_contract_candidates.append({
+                                "method": method,
+                                "path": route,
+                                "summary": "",
+                                "description": f"Detected endpoint from source analysis in {file_path}",
+                                "source_file": file_path,
+                                "line_start": line,
+                                "line_end": line,
+                                "handler": ep.get("handler") or "",
+                                "content": content,
+                                "features": features,
+                                "warnings": [],
+                            })
+
                         record["component"] = _classify_component(file_path, content)
                         component_distribution[record["component"]] = component_distribution.get(record["component"], 0) + 1
 
-                        # Security features detection
                         security_features = _detect_security_features(content)
                         if security_features:
                             security_features_detected.extend(security_features)
 
-                        # Extract affected packages/services
                         pkgs = _extract_packages(file_path, content, record["language"])
                         if pkgs:
                             affected_packages.extend(pkgs)
 
                         record["features"] = features
 
-                        # E. Schema & Scoring
                         schema_tags = SchemaDetector.analyze(file_path, content)
                         severity = SeverityCalculator.assess(ext, features, schema_tags)
-
                         record["severity"] = severity
                         if schema_tags:
                             has_db_change = True
@@ -1699,17 +1975,13 @@ def main():
                                 if tag.startswith("MONGOOSE_MODEL:"):
                                     tables_affected.append(tag.split(":", 1)[1])
 
-                        # F. Update Summary Stats
                         if severity_rank[severity] > max_severity:
                             max_severity = severity_rank[severity]
                             report["analysis_summary"]["highest_severity"] = severity
-
                         if severity == "MAJOR":
                             report["analysis_summary"]["breaking_changes_detected"] = True
 
-                        # API summary aggregation
-                        api_endpoints = features.get("api_endpoints", [])
-                        if isinstance(api_endpoints, list) and api_endpoints:
+                        if api_endpoints:
                             if change["change_type"] == "ADDED":
                                 api_summary["added"] += len(api_endpoints)
                             elif change["change_type"] == "DELETED":
@@ -1717,26 +1989,23 @@ def main():
                             else:
                                 api_summary["modified"] += len(api_endpoints)
 
-                        # Documentation impact signals
                         impact = _detect_doc_impact(file_path, api_summary, has_db_change)
                         doc_impact["readme"] = doc_impact["readme"] or impact["readme"]
                         doc_impact["api_docs"] = doc_impact["api_docs"] or impact["api_docs"]
                         doc_impact["architecture"] = doc_impact["architecture"] or impact["architecture"]
                         doc_impact["adr_required"] = doc_impact["adr_required"] or impact["adr_required"]
 
-                        # Configuration/build detection
                         path_lower = file_path.lower()
                         if os.path.basename(path_lower) in {"dockerfile", "docker-compose.yml", "docker-compose.yaml"}:
                             docker_changed = True
                         if os.path.basename(path_lower) in {
                             "pom.xml", "build.gradle", "build.gradle.kts", "package.json",
-                            "pyproject.toml", "requirements.txt", "makefile"
+                            "pyproject.toml", "requirements.txt", "makefile",
                         }:
                             config_build_files.append(os.path.basename(path_lower))
                         if path_lower.endswith((".env", ".yml", ".yaml", ".json", ".toml", ".ini")):
                             env_vars.extend(_extract_env_vars(content))
 
-                        # Test impact signals
                         is_test_file = (
                             "/test" in path_lower or "/tests" in path_lower or
                             path_lower.endswith("_test.py") or path_lower.endswith(".spec.ts") or
@@ -1755,6 +2024,15 @@ def main():
                         record["features"] = {"note": f"Partial extraction due to parser error: {e}"}
                         report["changes"].append(record)
                         continue
+
+                report["indexing"] = {
+                    "format": "SCIP",
+                    "symbol_count": symbol_count_total,
+                }
+                report["serialization"] = {
+                    "format": "protobuf",
+                    "total_payload_bytes": protobuf_payload_total,
+                }
 
             report["analysis_summary"]["total_files"] = len(report["changes"])
 
@@ -1808,6 +2086,15 @@ def main():
                         "warnings": []
                     })
 
+            api_contract_candidates = sorted(
+                api_contract_candidates,
+                key=lambda c: (
+                    str(c.get("method", "")),
+                    str(c.get("path", "")),
+                    str(c.get("source_file", "")),
+                    int(c.get("line_start", 0) or 0),
+                ),
+            )
             endpoints, extraction_quality = _build_api_contract_endpoints(api_contract_candidates)
             report["api_contract"] = {"endpoints": endpoints}
             report["extraction_quality"] = extraction_quality
@@ -1886,13 +2173,39 @@ def main():
                 bool(security_features_detected),
                 report["analysis_summary"]["breaking_changes_detected"]
             )
-            final_report = _to_canonical_v3(report, status="success")
+            breaking_changes = compare_reports(baseline_report_payload, report)
+            risk = score_report_risk(report, breaking_changes)
+            summary_severity = report.get("analysis_summary", {}).get("highest_severity", "PATCH")
+            rank = {"PATCH": 1, "MINOR": 2, "MAJOR": 3}
+            if rank.get(summary_severity, 1) > rank.get(risk.get("severity", "PATCH"), 1):
+                risk["severity"] = summary_severity
+            if breaking_changes:
+                report["breaking_change_details"] = _dedupe_order(
+                    report.get("breaking_change_details", []) +
+                    [item.get("description", "") for item in breaking_changes if item.get("description")]
+                )
+                report["analysis_summary"]["breaking_changes_detected"] = True
+                report["analysis_summary"]["highest_severity"] = risk.get(
+                    "severity",
+                    report["analysis_summary"]["highest_severity"]
+                )
+
+            final_report = _to_canonical_v3(
+                report,
+                status="success",
+                project_id=project_id,
+                baseline_commit=baseline_commit,
+                breaking_changes=breaking_changes,
+                risk=risk,
+            )
             valid, validation_error = _validate_report_schema(final_report)
             if not valid:
                 raise ValueError(f"Report validation failed: {validation_error}")
 
             # Save to file
             _write_report(final_report)
+            if current_commit_sha:
+                baseline_store.save_baseline(project_id, branch, current_commit_sha, final_report)
 
             # Print to stdout
             print(json.dumps(final_report, indent=2))

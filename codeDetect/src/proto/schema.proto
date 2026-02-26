@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package codedetect.ast;
+
+message ScipSymbol {
+  string symbol_id = 1;
+  string kind = 2;
+  string name = 3;
+}
+
+message AstRecord {
+  string file_path = 1;
+  string language = 2;
+  bool syntax_error = 3;
+  map<string, string> feature_summary = 4;
+  repeated ScipSymbol symbols = 5;
+}
