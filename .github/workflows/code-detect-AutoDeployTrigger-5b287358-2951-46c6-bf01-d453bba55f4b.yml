@@ -41,3 +41,4 @@ jobs:
           containerAppName: code-detect
           resourceGroup: DocPulse
           imageToBuild: docpulseresgistry.azurecr.io/code-detect:latest
+          imageToDeploy: docpulseresgistry.azurecr.io/code-detect:latest
