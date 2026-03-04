@@ -49,10 +49,14 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
+            az containerapp registry set \
+              --name code-detect \
+              --resource-group DocPulse \
+              --server docpulseresgistry.azurecr.io \
+              --username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
+              --password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+
             az containerapp update \
               --name code-detect \
               --resource-group DocPulse \
-              --image docpulseresgistry.azurecr.io/code-detect:latest \
-              --registry-server docpulseresgistry.azurecr.io \
-              --registry-username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
-              --registry-password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+              --image docpulseresgistry.azurecr.io/code-detect:latest
