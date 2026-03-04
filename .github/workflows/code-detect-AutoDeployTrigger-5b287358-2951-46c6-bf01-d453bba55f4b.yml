@@ -59,4 +59,5 @@ jobs:
             az containerapp update \
               --name code-detect \
               --resource-group DocPulse \
+              --container-name code-detect \
               --image docpulseresgistry.azurecr.io/code-detect:latest
