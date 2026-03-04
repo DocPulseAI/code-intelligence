@@ -186,6 +186,94 @@ with:
 - Only then can docker/build-push-action successfully push with `push: true`
 
 ---
+
+### 7. **Azure Deploy Action Ignores imageToDeploy Parameter (SHA Tag Override)**
+**Issue:** Even after adding `imageToDeploy`, the action still tried to deploy with git commit SHA tag
+- `azure/container-apps-deploy-action@v2` was overriding the `imageToDeploy` with its own commit SHA logic
+- Image pushed to ACR as `latest` but deployment tried to use `SHA` tag that didn't exist
+- `MANIFEST_UNKNOWN: manifest tagged by "6655078d79d3a8e95805674e49eaf0ea8bfc473c"`
+
+**Root Cause:** The `azure/container-apps-deploy-action@v2` has built-in SHA tagging that overrides explicit parameters; it's designed for automatic versioning but conflicts with our tagging strategy
+
+**Fix:** Replace with separate, more explicit actions:
+```yaml
+# ❌ WRONG (problematic action)
+- uses: azure/container-apps-deploy-action@v2
+  with:
+    imageToBuild: ...
+    imageToDeploy: ...  # Gets ignored!
+
+# ✅ CORRECT (explicit build + deploy)
+- uses: docker/build-push-action@v5
+  with:
+    context: ${{ github.workspace }}
+    file: codeDetect/Dockerfile
+    push: true
+    tags: docpulseresgistry.azurecr.io/code-detect:latest
+    registry: docpulseresgistry.azurecr.io
+    username: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}
+    password: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+
+- uses: azure/CLI@v1
+  with:
+    inlineScript: |
+      az containerapp update \
+        --name code-detect \
+        --resource-group DocPulse \
+        --image docpulseresgistry.azurecr.io/code-detect:latest \
+        --registry-server docpulseresgistry.azurecr.io \
+        --registry-username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
+        --registry-password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+```
+
+**Benefits:**
+- Full control over image tagging
+- Clear separation of concerns (build vs deploy)
+- Explicit image reference in deployment
+- Works with any tagging strategy (latest, SemVer, SHA, etc.)
+
+---
+
+### 9. **Invalid Parameters in az containerapp update Command**
+**Issue:** `unrecognized arguments: --registry-server`, `--registry-username`, `--registry-password`
+- Tried to pass registry credentials directly to `az containerapp update`
+- Azure CLI rejected these parameters as invalid/unrecognized
+- Error: `az cli script failed`
+
+**Root Cause:** `az containerapp update` doesn't accept registry credentials. Registry configuration must be done separately using `az containerapp registry set`.
+
+**Fix:**
+```bash
+# ❌ WRONG
+az containerapp update \
+  --name code-detect \
+  --resource-group DocPulse \
+  --image docpulseresgistry.azurecr.io/code-detect:latest \
+  --registry-server docpulseresgistry.azurecr.io \           # ← Invalid!
+  --registry-username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \  # ← Invalid!
+  --registry-password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}    # ← Invalid!
+
+# ✅ CORRECT - Two separate commands
+az containerapp registry set \
+  --name code-detect \
+  --resource-group DocPulse \
+  --server docpulseresgistry.azurecr.io \
+  --username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
+  --password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+
+az containerapp update \
+  --name code-detect \
+  --resource-group DocPulse \
+  --image docpulseresgistry.azurecr.io/code-detect:latest
+```
+
+**Key Learning:**
+- `az containerapp registry set` = configure registry credentials
+- `az containerapp update` = update the container app (image, replicas, etc.)
+- These are two separate operations that must happen in order
+- Never mix registry parameters into the update command
+
+---
 **Issue:** Even after adding `imageToDeploy`, the action still tried to deploy with git commit SHA tag
 - `azure/container-apps-deploy-action@v2` was overriding the `imageToDeploy` with its own commit SHA logic
 - Image pushed to ACR as `latest` but deployment tried to use `SHA` tag that didn't exist
@@ -378,6 +466,8 @@ curl https://your-container-app.azurecontainerapps.io/
 | 0514604 | Action SHA override | Replaced with docker + az CLI |
 | 708fad0 | Checklist update | Documented Issue #7 |
 | d3ea5c7 | ACR auth | Added docker/login-action |
+| 8f800d1 | Checklist update | Documented Issue #8 |
+| 08f91c7 | az CLI params | Fixed registry set before update |
 
 ---
 
