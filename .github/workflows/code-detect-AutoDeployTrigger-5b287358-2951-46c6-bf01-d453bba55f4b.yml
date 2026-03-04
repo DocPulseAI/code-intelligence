@@ -4,19 +4,18 @@ name: Trigger auto deployment for code-detect
 on:
   # Automatically trigger it when detected changes in repo
   push:
-    branches: 
-      [ epic-1 ]
+    branches: [epic-1]
     paths:
-    - '**'
-    - '.github/workflows/code-detect-AutoDeployTrigger-5b287358-2951-46c6-bf01-d453bba55f4b.yml'
+      - "**"
+      - ".github/workflows/code-detect-AutoDeployTrigger-5b287358-2951-46c6-bf01-d453bba55f4b.yml"
 
-  # Allow manual trigger 
-  workflow_dispatch:      
+  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    permissions: 
+    permissions:
       id-token: write #This is required for requesting the OIDC JWT Token
       contents: read #Required when GH token is used to authenticate with private repo
 
@@ -35,15 +34,10 @@ jobs:
         uses: azure/container-apps-deploy-action@v2
         with:
           appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: _dockerfilePath_
-          _targetLabelKey_: _targetLabel_
+          dockerfilePath: codeDetect/Dockerfile
           registryUrl: docpulseresgistry.azurecr.io
           registryUsername: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}
           registryPassword: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
           containerAppName: code-detect
           resourceGroup: DocPulse
           imageToBuild: docpulseresgistry.azurecr.io/code-detect:${{ github.sha }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
-
-
