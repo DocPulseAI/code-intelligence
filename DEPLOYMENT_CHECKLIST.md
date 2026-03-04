@@ -119,6 +119,33 @@ COPY codeDetect/ .
 
 ---
 
+### 6. **Missing imageToDeploy Parameter in Azure Deploy Action**
+**Issue:** `MANIFEST_UNKNOWN: manifest tagged by "SHA-HASH" is not found`
+- Azure deploy action built image but didn't push it to ACR
+- Tried to deploy non-existent SHA-tagged image
+- Deployment failed with "image not found"
+
+**Root Cause:** Missing `imageToDeploy` parameter - action generated SHA tag but didn't know which tag to actually deploy
+
+**Fix:**
+```yaml
+# ❌ WRONG
+with:
+  imageToBuild: docpulseresgistry.azurecr.io/code-detect:latest
+  # Missing: imageToDeploy (action used internal SHA hash by default)
+
+# ✅ CORRECT
+with:
+  imageToBuild: docpulseresgistry.azurecr.io/code-detect:latest
+  imageToDeploy: docpulseresgistry.azurecr.io/code-detect:latest  # Explicitly deploy latest tag
+```
+
+**Key Learning:** Both parameters needed:
+- `imageToBuild` = what to name the image after building
+- `imageToDeploy` = which image tag to actually deploy to container app
+
+---
+
 ## Deployment Files Configuration
 
 ### Files That Must Match:
@@ -152,6 +179,8 @@ COPY codeDetect/ .
   - Remove placeholder parameters (anything with `_key_` or `_values_`)
   - Validate input names against action documentation
   - Use real file paths, not placeholders
+  - **Azure Deploy Action:** Include both `imageToBuild` AND `imageToDeploy` with matching image tags
+  - Test workflow syntax before committing
 - [ ] **Environment Config:**
   - Verify `.env` has real credentials (not `replace-me` placeholders)
   - Document required env vars in README
@@ -245,6 +274,8 @@ curl https://your-container-app.azurecontainerapps.io/
 | 866a62d | Invalid workflow params | Removed placeholders, added real params |
 | 86cd346 | SHA tag | Changed to latest tag |
 | 9745a3c | Dockerfile paths | Added codeDetect/ prefix to COPY |
+| 1c24ffa | Documentation | Added DEPLOYMENT_CHECKLIST.md |
+| 8cbbad5 | Missing imageToDeploy | Added explicit image deploy tag |
 
 ---
 
