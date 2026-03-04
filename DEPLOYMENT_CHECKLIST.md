@@ -146,6 +146,53 @@ with:
 
 ---
 
+### 7. **Azure Deploy Action Ignores imageToDeploy Parameter (SHA Tag Override)**
+**Issue:** Even after adding `imageToDeploy`, the action still tried to deploy with git commit SHA tag
+- `azure/container-apps-deploy-action@v2` was overriding the `imageToDeploy` with its own commit SHA logic
+- Image pushed to ACR as `latest` but deployment tried to use `SHA` tag that didn't exist
+- `MANIFEST_UNKNOWN: manifest tagged by "6655078d79d3a8e95805674e49eaf0ea8bfc473c"`
+
+**Root Cause:** The `azure/container-apps-deploy-action@v2` has built-in SHA tagging that overrides explicit parameters; it's designed for automatic versioning but conflicts with our tagging strategy
+
+**Fix:** Replace with separate, more explicit actions:
+```yaml
+# ❌ WRONG (problematic action)
+- uses: azure/container-apps-deploy-action@v2
+  with:
+    imageToBuild: ...
+    imageToDeploy: ...  # Gets ignored!
+
+# ✅ CORRECT (explicit build + deploy)
+- uses: docker/build-push-action@v5
+  with:
+    context: ${{ github.workspace }}
+    file: codeDetect/Dockerfile
+    push: true
+    tags: docpulseresgistry.azurecr.io/code-detect:latest
+    registry: docpulseresgistry.azurecr.io
+    username: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}
+    password: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+
+- uses: azure/CLI@v1
+  with:
+    inlineScript: |
+      az containerapp update \
+        --name code-detect \
+        --resource-group DocPulse \
+        --image docpulseresgistry.azurecr.io/code-detect:latest \
+        --registry-server docpulseresgistry.azurecr.io \
+        --registry-username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
+        --registry-password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+```
+
+**Benefits:**
+- Full control over image tagging
+- Clear separation of concerns (build vs deploy)
+- Explicit image reference in deployment
+- Works with any tagging strategy (latest, SemVer, SHA, etc.)
+
+---
+
 ## Deployment Files Configuration
 
 ### Files That Must Match:
@@ -176,10 +223,9 @@ with:
   - If build context is epicFolder, use relative paths
 - [ ] **Procfile:** Must match Dockerfile CMD app entry point
 - [ ] **GitHub Workflows:**
-  - Remove placeholder parameters (anything with `_key_` or `_values_`)
-  - Validate input names against action documentation
-  - Use real file paths, not placeholders
-  - **Azure Deploy Action:** Include both `imageToBuild` AND `imageToDeploy` with matching image tags
+  - ✅ **RECOMMENDED:** Use `docker/build-push-action@v5` + `azure/CLI@v1` for full control
+  - ⚠️ **AVOID:** `azure/container-apps-deploy-action@v2` (applies SHA tags that override parameters)
+  - If using custom action, validate all parameters are applied correctly
   - Test workflow syntax before committing
 - [ ] **Environment Config:**
   - Verify `.env` has real credentials (not `replace-me` placeholders)
@@ -221,6 +267,18 @@ python -m yaml .github/workflows/*.yml
 - [ ] COPY commands use correct relative paths from build context
 - [ ] No typos in filenames
 - [ ] Test with: `docker build -f path/to/Dockerfile .`
+
+### Issue: Deployment fails with "manifest tagged by SHA is not found"
+**Checklist (DO NOT USE `azure/container-apps-deploy-action`):**
+- [ ] Use `docker/build-push-action` to build and push to ACR
+- [ ] Use `azure/CLI@v1` with `az containerapp update` to deploy
+- [ ] Explicit image reference: `--image docpulseresgistry.azurecr.io/code-detect:latest`
+- [ ] Verify image exists in ACR before deployment
+- [ ] Example workflow structure (see commit 0514604):
+  - Step 1: `docker/build-push-action` with explicit tags
+  - Step 2: `azure/CLI@v1` with `az containerapp update --image`
+
+**Avoid:** `azure/container-apps-deploy-action@v2` - it applies internal SHA tagging that conflicts with explicit tagging strategies
 
 ### Issue: Service Bus not connecting
 **Checklist:**
@@ -276,6 +334,8 @@ curl https://your-container-app.azurecontainerapps.io/
 | 9745a3c | Dockerfile paths | Added codeDetect/ prefix to COPY |
 | 1c24ffa | Documentation | Added DEPLOYMENT_CHECKLIST.md |
 | 8cbbad5 | Missing imageToDeploy | Added explicit image deploy tag |
+| 8cdb45a | Checklist update | Documented Issue #6 |
+| 0514604 | Action SHA override | Replaced with docker + az CLI |
 
 ---
 
