@@ -3,11 +3,15 @@ Code Change Detector - REST API
 Flask web service for analyzing code changes
 """
 
+import asyncio
+import atexit
 import json
 import os
+import signal
 import tempfile
 import shutil
 import importlib.util
+import threading
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, request, jsonify
@@ -15,8 +19,9 @@ from flasgger import Swagger
 import subprocess
 import sys
 import logging
-from typing import Optional
+from typing import Optional, Any, Awaitable, Callable
 from src.azure_servicebus_client import send_message_to_queue
+from service_bus import Epic1ServiceBusWorker
 
 app = Flask(__name__)
 swagger = Swagger(app, config={
@@ -33,6 +38,96 @@ swagger = Swagger(app, config={
     "swagger_ui": True,
     "specs_route": "/docs/"
 })
+
+# ===== Service Bus Listener Setup =====
+async def process_message(payload: dict) -> dict:
+    """EPIC-1 business logic stub. Replace with real impact analysis."""
+    return {
+        "epic": "epic1",
+        "status": "processed",
+        "input": payload,
+    }
+
+
+class BackgroundAsyncRunner:
+    def __init__(self, worker: Epic1ServiceBusWorker) -> None:
+        self.worker = worker
+        self._thread: threading.Thread | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._stop_event: asyncio.Event | None = None
+        self._started = threading.Event()
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        with self._lock:
+            if self._thread and self._thread.is_alive():
+                return
+            self._thread = threading.Thread(target=self._run_loop, name="epic1-servicebus-listener", daemon=True)
+            self._thread.start()
+            self._started.wait(timeout=10)
+            LOG.info(json.dumps({"event": "background_runner_started"}, separators=(",", ":")))
+
+    def _run_loop(self) -> None:
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+        self._stop_event = asyncio.Event()
+        self._started.set()
+        try:
+            self._loop.run_until_complete(self.worker.run(self._stop_event))
+        except Exception as exc:
+            LOG.error(json.dumps({"event": "background_runner_crashed", "error": str(exc)}, separators=(",", ":")))
+        finally:
+            pending = asyncio.all_tasks(self._loop)
+            for task in pending:
+                task.cancel()
+            if pending:
+                self._loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            self._loop.close()
+
+    def stop(self, timeout: float = 30.0) -> None:
+        with self._lock:
+            if not self._thread:
+                return
+            if self._loop and self._stop_event:
+                self._loop.call_soon_threadsafe(self._stop_event.set)
+            self._thread.join(timeout=timeout)
+            if self._thread.is_alive():
+                LOG.warning(json.dumps({"event": "background_runner_stop_timeout"}, separators=(",", ":")))
+            else:
+                LOG.info(json.dumps({"event": "background_runner_stopped"}, separators=(",", ":")))
+            self._thread = None
+            self._loop = None
+            self._stop_event = None
+            self._started.clear()
+
+
+_listener_started = False
+worker = Epic1ServiceBusWorker(process_message=process_message)
+runner = BackgroundAsyncRunner(worker)
+
+
+def start_listener() -> None:
+    global _listener_started
+    if _listener_started:
+        return
+    runner.start()
+    _listener_started = True
+
+
+@app.before_request
+def ensure_listener_started() -> None:
+    start_listener()
+
+
+def _shutdown_handler(signum: int, _frame: Any) -> None:
+    LOG.info(json.dumps({"event": "signal_received", "signal": signum}, separators=(",", ":")))
+    runner.stop()
+
+
+signal.signal(signal.SIGTERM, _shutdown_handler)
+signal.signal(signal.SIGINT, _shutdown_handler)
+atexit.register(runner.stop)
+# ===== End Service Bus Listener Setup =====
 
 # Configuration
 REPORTS_DIR = Path('/tmp/code-detector-reports')

@@ -22,4 +22,4 @@ ENV PYTHONUNBUFFERED=1
 EXPOSE 5000
 
 # Run EPIC-1 app that starts the Service Bus listener on startup.
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "main:app"]
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "api:app"]
