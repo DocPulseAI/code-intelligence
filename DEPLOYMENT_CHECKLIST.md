@@ -146,7 +146,46 @@ with:
 
 ---
 
-### 7. **Azure Deploy Action Ignores imageToDeploy Parameter (SHA Tag Override)**
+### 8. **Missing Docker Registry Authentication in build-push-action**
+**Issue:** `UNAUTHORIZED: authentication required` when pushing to ACR
+- `docker/build-push-action@v5` doesn't have `registry`, `username`, `password` parameters
+- Build succeeded locally but failed to push to ACR
+- Error: `unauthorized: {"errors":[{"code":"UNAUTHORIZED"`
+
+**Root Cause:** Tried to use invalid parameters with `docker/build-push-action`. This action doesn't directly handle registry credentials - it relies on pre-authentication via `docker/login-action`.
+
+**Fix:**
+```yaml
+# ❌ WRONG
+- uses: docker/build-push-action@v5
+  with:
+    push: true
+    tags: docpulseresgistry.azurecr.io/code-detect:latest
+    registry: docpulseresgistry.azurecr.io  # Invalid parameter!
+    username: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}  # Invalid!
+    password: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}  # Invalid!
+
+# ✅ CORRECT
+- uses: docker/login-action@v3
+  with:
+    registry: docpulseresgistry.azurecr.io
+    username: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}
+    password: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+
+- uses: docker/build-push-action@v5
+  with:
+    context: ${{ github.workspace }}
+    file: codeDetect/Dockerfile
+    push: true
+    tags: docpulseresgistry.azurecr.io/code-detect:latest
+```
+
+**Key Learning:**
+- `docker/login-action@v3` must run BEFORE `docker/build-push-action@v5`
+- It sets up Docker credentials for subsequent actions
+- Only then can docker/build-push-action successfully push with `push: true`
+
+---
 **Issue:** Even after adding `imageToDeploy`, the action still tried to deploy with git commit SHA tag
 - `azure/container-apps-deploy-action@v2` was overriding the `imageToDeploy` with its own commit SHA logic
 - Image pushed to ACR as `latest` but deployment tried to use `SHA` tag that didn't exist
@@ -224,6 +263,7 @@ with:
 - [ ] **Procfile:** Must match Dockerfile CMD app entry point
 - [ ] **GitHub Workflows:**
   - ✅ **RECOMMENDED:** Use `docker/build-push-action@v5` + `azure/CLI@v1` for full control
+  - ✅ **REQUIRED before docker/build-push-action:** Add `docker/login-action@v3` for ACR authentication
   - ⚠️ **AVOID:** `azure/container-apps-deploy-action@v2` (applies SHA tags that override parameters)
   - If using custom action, validate all parameters are applied correctly
   - Test workflow syntax before committing
@@ -336,6 +376,8 @@ curl https://your-container-app.azurecontainerapps.io/
 | 8cbbad5 | Missing imageToDeploy | Added explicit image deploy tag |
 | 8cdb45a | Checklist update | Documented Issue #6 |
 | 0514604 | Action SHA override | Replaced with docker + az CLI |
+| 708fad0 | Checklist update | Documented Issue #7 |
+| d3ea5c7 | ACR auth | Added docker/login-action |
 
 ---
 
