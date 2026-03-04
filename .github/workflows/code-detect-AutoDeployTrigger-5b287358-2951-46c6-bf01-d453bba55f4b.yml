@@ -49,6 +49,7 @@ jobs:
         uses: azure/CLI@v1
         with:
           inlineScript: |
+            # Set registry credentials
             az containerapp registry set \
               --name code-detect \
               --resource-group DocPulse \
@@ -56,8 +57,9 @@ jobs:
               --username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
               --password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
 
+            # Force new revision with latest image (--revision-suffix creates completely new revision)
             az containerapp update \
               --name code-detect \
               --resource-group DocPulse \
-              --container-name code-detect \
-              --image docpulseresgistry.azurecr.io/code-detect:latest
+              --image docpulseresgistry.azurecr.io/code-detect:latest \
+              --revision-suffix "r$(date +%s)"
