@@ -31,14 +31,24 @@ jobs:
           subscription-id: ${{ secrets.CODEDETECT_AZURE_SUBSCRIPTION_ID }}
 
       - name: Build and push container image to registry
-        uses: azure/container-apps-deploy-action@v2
+        uses: docker/build-push-action@v5
         with:
-          appSourcePath: ${{ github.workspace }}
-          dockerfilePath: codeDetect/Dockerfile
-          registryUrl: docpulseresgistry.azurecr.io
-          registryUsername: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}
-          registryPassword: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
-          containerAppName: code-detect
-          resourceGroup: DocPulse
-          imageToBuild: docpulseresgistry.azurecr.io/code-detect:latest
-          imageToDeploy: docpulseresgistry.azurecr.io/code-detect:latest
+          context: ${{ github.workspace }}
+          file: codeDetect/Dockerfile
+          push: true
+          tags: docpulseresgistry.azurecr.io/code-detect:latest
+          registry: docpulseresgistry.azurecr.io
+          username: ${{ secrets.CODEDETECT_REGISTRY_USERNAME }}
+          password: ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
+
+      - name: Deploy to Azure Container Apps
+        uses: azure/CLI@v1
+        with:
+          inlineScript: |
+            az containerapp update \
+              --name code-detect \
+              --resource-group DocPulse \
+              --image docpulseresgistry.azurecr.io/code-detect:latest \
+              --registry-server docpulseresgistry.azurecr.io \
+              --registry-username ${{ secrets.CODEDETECT_REGISTRY_USERNAME }} \
+              --registry-password ${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}
