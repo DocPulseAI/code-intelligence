@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://codedetect.local/schema/impact_report.schema.json",
+  "title": "EPIC-1 Impact Report",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "version",
+    "status",
+    "meta",
+    "project_id",
+    "branch",
+    "commit_sha",
+    "baseline_commit",
+    "analysis_summary",
+    "breaking_changes",
+    "statistics",
+    "severity",
+    "deterministic",
+    "report"
+  ],
+  "properties": {
+    "schema_version": {"type": "string"},
+    "version": {"type": "string"},
+    "status": {"type": "string", "enum": ["success", "partial"]},
+    "meta": {"type": "object"},
+    "project_id": {"type": "string"},
+    "branch": {"type": "string"},
+    "commit_sha": {"type": "string"},
+    "baseline_commit": {"type": ["string", "null"]},
+    "analysis_summary": {
+      "type": "object",
+      "required": ["total_files", "highest_severity", "breaking_changes_detected"],
+      "properties": {
+        "total_files": {"type": "integer"},
+        "highest_severity": {"type": "string", "enum": ["MAJOR", "MINOR", "PATCH"]},
+        "breaking_changes_detected": {"type": "boolean"}
+      }
+    },
+    "breaking_changes": {"type": "array"},
+    "statistics": {
+      "type": "object",
+      "required": ["total_changes", "major", "minor", "patch"],
+      "properties": {
+        "total_changes": {"type": "integer"},
+        "major": {"type": "integer"},
+        "minor": {"type": "integer"},
+        "patch": {"type": "integer"}
+      }
+    },
+    "severity": {"type": "string", "enum": ["MAJOR", "MINOR", "PATCH"]},
+    "deterministic": {"type": "boolean"},
+    "report": {
+      "type": "object",
+      "required": [
+        "context",
+        "analysis_summary",
+        "changes",
+        "repository_type",
+        "tech_stack",
+        "documentation_contract",
+        "architecture",
+        "api_surface",
+        "data_model",
+        "doc_contract"
+      ],
+      "properties": {
+        "context": {"type": "object"},
+        "analysis_summary": {"type": "object"},
+        "changes": {"type": "array"},
+        "repository_type": {
+          "type": "string",
+          "enum": ["backend-service", "frontend-app", "fullstack", "library", "infra-only", "cli"]
+        },
+        "tech_stack": {
+          "type": "object",
+          "required": ["backend_framework", "frontend_framework", "database", "orm", "infra", "ci"],
+          "properties": {
+            "backend_framework": {"type": ["string", "null"]},
+            "frontend_framework": {"type": ["string", "null"]},
+            "database": {"type": ["string", "null"]},
+            "orm": {"type": ["string", "null"]},
+            "infra": {"type": "array", "items": {"type": "string"}},
+            "ci": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "documentation_contract": {
+          "type": "object",
+          "required": ["requires_readme", "requires_api_reference", "requires_architecture_doc", "requires_adr"],
+          "properties": {
+            "requires_readme": {"type": "boolean"},
+            "requires_api_reference": {"type": "boolean"},
+            "requires_architecture_doc": {"type": "boolean"},
+            "requires_adr": {"type": "boolean"}
+          }
+        },
+        "architecture": {
+          "type": "object",
+          "required": ["pattern", "layers", "external_dependencies"],
+          "properties": {
+            "pattern": {
+              "type": "string",
+              "enum": [
+                "modular-monolith",
+                "modular monolith",
+                "layered",
+                "microservice",
+                "multi-application modular monolith",
+                "distributed services"
+              ]
+            },
+            "layers": {"type": "array", "items": {"type": "string"}},
+            "external_dependencies": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "dependency_classification": {
+          "type": "object",
+          "required": ["external_dependencies", "internal_modules", "static_assets", "dev_dependencies"],
+          "properties": {
+            "external_dependencies": {"type": "array", "items": {"type": "string"}},
+            "internal_modules": {"type": "array", "items": {"type": "string"}},
+            "static_assets": {"type": "array", "items": {"type": "string"}},
+            "dev_dependencies": {"type": "array", "items": {"type": "string"}}
+          }
+        },
+        "risk_analysis": {
+          "type": "object",
+          "required": ["operational_risk", "blast_radius", "test_scope", "migration_required"],
+          "properties": {
+            "operational_risk": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH"]},
+            "blast_radius": {"type": "string", "enum": ["LOCAL", "SERVICE", "APPLICATION"]},
+            "test_scope": {"type": "array", "items": {"type": "string"}},
+            "migration_required": {"type": "boolean"}
+          }
+        },
+        "api_surface": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["method", "path", "auth_required", "request_schema_hash", "response_schema_hash", "controller"],
+            "properties": {
+              "method": {"type": "string"},
+              "path": {"type": "string"},
+              "auth_required": {"type": "boolean"},
+              "request_schema_hash": {"type": "string"},
+              "response_schema_hash": {"type": "string"},
+              "controller": {"type": "string"}
+            }
+          }
+        },
+        "data_model": {
+          "type": "object",
+          "required": ["entities", "relationships"],
+          "properties": {
+            "entities": {"type": "array"},
+            "relationships": {"type": "array"}
+          }
+        },
+        "doc_contract": {"type": "object"}
+      }
+    }
+  }
+}

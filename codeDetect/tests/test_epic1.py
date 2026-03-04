@@ -660,6 +660,36 @@ const schema = new mongoose.Schema({
         result = SchemaDetector.analyze("model.ts", code)
         assert "MONGOOSE_SCHEMA" in result
 
+    def test_postgres_enum_and_index_detection(self):
+        """Test PostgreSQL enum and index change tags."""
+        code = """
+CREATE TYPE order_status AS ENUM ('pending', 'paid');
+ALTER TYPE order_status ADD VALUE 'cancelled';
+CREATE INDEX idx_orders_created_at ON orders(created_at);
+DROP INDEX IF EXISTS idx_old_orders;
+"""
+        result = SchemaDetector.analyze("migration.sql", code)
+        assert "SQL_SCHEMA_CHANGE" in result
+        assert "POSTGRES_SCHEMA_CHANGE" in result
+        assert "POSTGRES_ENUM_CHANGE" in result
+        assert any(tag.startswith("POSTGRES_CREATE_TYPE:order_status") for tag in result)
+        assert any(tag.startswith("POSTGRES_CREATE_INDEX:idx_orders_created_at") for tag in result)
+
+    def test_postgres_constraint_and_column_detection(self):
+        """Test PostgreSQL constraint and column mutation tags."""
+        code = """
+ALTER TABLE users ADD COLUMN phone TEXT;
+ALTER TABLE users ALTER COLUMN email TYPE VARCHAR(512);
+ALTER TABLE users ADD CONSTRAINT users_email_key UNIQUE (email);
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_old_constraint;
+"""
+        result = SchemaDetector.analyze("alter_users.sql", code)
+        assert "SQL_SCHEMA_CHANGE" in result
+        assert "POSTGRES_SCHEMA_CHANGE" in result
+        assert "POSTGRES_COLUMN_CHANGE" in result
+        assert "POSTGRES_CONSTRAINT_CHANGE" in result
+        assert "SQL_ALTER_TABLE:users" in result
+
 
 # ============================================================================
 # ConfigLoader Tests
@@ -738,6 +768,24 @@ class TestJSParser:
         assert "/api/users" in paths
         assert "/api/login" in paths
 
+    def test_extract_express_routes_from_custom_router_symbol(self):
+        """Test extraction from router variables not named exactly 'router'."""
+        code = """
+        import express from 'express';
+        const userRouter = express.Router();
+        userRouter.get('/users', (req, res) => {});
+        userRouter.post('/users', (req, res) => {});
+        const util = { get: () => {} };
+        util.get('/ignore', () => {});
+        """
+        result = JSParser.analyze(code)
+        routes = result["api_endpoints"]
+        assert len(routes) == 2
+        verbs = {r["verb"] for r in routes}
+        paths = {r["route"] for r in routes}
+        assert verbs == {"GET", "POST"}
+        assert paths == {"/users"}
+
     def test_extract_dependencies(self):
         """Test extraction of imports/requires."""
         code = """
@@ -806,10 +854,10 @@ class TestTSParser:
         """Test extraction of Express routes in TypeScript."""
         code = """
         import { Router } from 'express';
-        const router = Router();
+        const itemRouter = Router();
         
-        router.get('/api/v1/items', controller.getItems);
-        router.post('/api/v1/items', controller.createItem);
+        itemRouter.get('/api/v1/items', controller.getItems);
+        itemRouter.post('/api/v1/items', controller.createItem);
         """
         result = TSParser.analyze(code)
         routes = result["api_endpoints"]

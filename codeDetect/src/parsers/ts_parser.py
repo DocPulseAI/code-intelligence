@@ -1,4 +1,5 @@
 from src.parsers.tree_sitter_engine import parse_code
+import re
 
 
 class TSParser:
@@ -8,6 +9,7 @@ class TSParser:
     def analyze(content: str) -> dict:
         parsed = parse_code(content, ".ts")
         features = parsed.get("features", {}) or {}
+        text = content or ""
 
         # Keep backward compatibility for callers expecting api_endpoints.
         if "api_endpoints" not in features and isinstance(features.get("api_routes"), list):
@@ -21,4 +23,14 @@ class TSParser:
                 if isinstance(r, dict)
             ]
 
+        features.setdefault("functions", [])
+        features.setdefault("classes", [])
+        features.setdefault("exported_functions", [])
+        features.setdefault("exported_classes", [])
+        features.setdefault("api_endpoints", [])
+        if "dependencies" not in features:
+            deps: list[str] = []
+            deps.extend(re.findall(r"\bimport\s+(?:[\w*{}\s,]+)\s+from\s+['\"]([^'\"]+)['\"]", text))
+            deps.extend(re.findall(r"\brequire\(\s*['\"]([^'\"]+)['\"]\s*\)", text))
+            features["dependencies"] = sorted(set(deps))
         return features

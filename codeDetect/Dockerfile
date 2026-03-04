@@ -21,5 +21,5 @@ ENV PYTHONUNBUFFERED=1
 # Expose port for Flask API
 EXPOSE 5000
 
-# Default command - run Flask API with hardened Gunicorn settings
-CMD ["gunicorn", "-c", "gunicorn.conf.py", "api:app"]
+# Run EPIC-1 app that starts the Service Bus listener on startup.
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "main:app"]

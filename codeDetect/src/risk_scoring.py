@@ -13,6 +13,9 @@ SEVERITY_ORDER = {"PATCH": 1, "MINOR": 2, "MAJOR": 3}
 def _count_auth_sensitive_endpoints(endpoints: list[dict]) -> int:
     total = 0
     for endpoint in endpoints:
+        if endpoint.get("auth_required") is True:
+            total += 1
+            continue
         auth = (endpoint.get("auth") or {})
         if auth.get("required") is True:
             total += 1
@@ -35,7 +38,11 @@ def score_report_risk(report: dict, breaking_changes: list[dict]) -> dict[str, A
     api_impact = int(api_summary.get("added", 0)) + int(api_summary.get("modified", 0)) + int(api_summary.get("removed", 0))
 
     schema_weight = 4 if (report.get("database_impact", {}) or {}).get("schema_changed") else 0
-    auth_weight = _count_auth_sensitive_endpoints(list((report.get("api_contract", {}) or {}).get("endpoints", [])))
+    auth_endpoints = list((report.get("api_surface", []) or []))
+    if not auth_endpoints:
+        auth_endpoints = list((report.get("api_contract", {}) or {}).get("endpoints", [])
+        )
+    auth_weight = _count_auth_sensitive_endpoints(auth_endpoints)
     fanout_weight = _dependency_fanout(list(report.get("affected_packages", [])))
 
     score = (

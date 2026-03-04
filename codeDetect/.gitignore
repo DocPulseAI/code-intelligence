@@ -1,6 +1,28 @@
 __pycache__/
 *.py[cod]
+.DS_Store
 
+# Python tooling/cache
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual/env files
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
 # Generated analysis artifacts
 impact_report_new_user.json
 epic1_report.json
+impact_report.json
+impact_report_*.json
+analyzed_files_*.txt
+*_route_audit.txt
+
+# Local baseline/output store
+.baseline_store/

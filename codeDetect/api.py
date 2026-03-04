@@ -16,6 +16,7 @@ import subprocess
 import sys
 import logging
 from typing import Optional
+from src.azure_servicebus_client import send_message_to_queue
 
 app = Flask(__name__)
 swagger = Swagger(app, config={
@@ -172,6 +173,7 @@ def root():
         "endpoints": {
             "health": "/health",
             "health_dependencies": "/health/dependencies",
+            "servicebus_publish": "/servicebus/publish",
             "docs": "/docs/",
             "analyze": "/analyze",
             "analyze_local": "/analyze/local"
@@ -231,6 +233,60 @@ def health_dependencies():
     }
     status_code = 200 if DEPENDENCY_STATUS["overall_ok"] else 503
     return jsonify(payload), status_code
+
+
+@app.route('/servicebus/publish', methods=['POST'])
+def publish_servicebus_message():
+    """
+    Publish a message to Azure Service Bus queue
+    ---
+    tags:
+      - Integration
+    parameters:
+      - name: body
+        in: body
+        required: true
+        schema:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              description: String, object, or list payload sent to Service Bus.
+            queue_name:
+              type: string
+              description: Optional override for SERVICEBUS_QUEUE_NAME.
+            connection_string:
+              type: string
+              description: Optional override for SERVICEBUS_CONNECTION_STRING.
+    responses:
+      200:
+        description: Message published
+      400:
+        description: Invalid payload or missing config
+      500:
+        description: Publish failed
+    """
+    ok, data, err = _require_json_object()
+    if not ok:
+        return err
+
+    if "message" not in data:
+        return jsonify({"error": "message is required"}), 400
+
+    try:
+        send_message_to_queue(
+            message_body=data["message"],
+            connection_string=data.get("connection_string"),
+            queue_name=data.get("queue_name"),
+        )
+        return jsonify({"status": "published"}), 200
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        LOG.exception("Service Bus publish failed")
+        return jsonify({"error": "Service Bus publish failed", "details": str(exc)}), 500
+
 
 @app.route('/analyze', methods=['POST'])
 def analyze():

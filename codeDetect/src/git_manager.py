@@ -8,6 +8,7 @@ import datetime
 import tempfile
 import shutil
 import time
+import re
 from typing import List, Dict, Optional, Any
 from git import Repo, InvalidGitRepositoryError, GitCommandError
 
@@ -32,11 +33,14 @@ class GitManager:
         """
         self.is_temporary = False
         self.temp_dir = None
+        self.source_repo_input = repo_path
+        self.repo_slug: Optional[str] = None
 
         # Check if repo_path is a GitHub URL
         if repo_path.startswith(('http://', 'https://', 'git@')):
             self.is_temporary = True
             self.temp_dir = tempfile.mkdtemp(prefix='git_clone_')
+            self.repo_slug = self._extract_repo_slug(repo_path)
 
             # Build authenticated URL if token provided
             if github_token and repo_path.startswith('https://github.com/'):
@@ -118,6 +122,10 @@ class GitManager:
                 "is_first_commit": False
             }
         }
+        if self.is_temporary:
+            metadata["remote_url"] = self.source_repo_input
+            if self.repo_slug:
+                metadata["repository_slug"] = self.repo_slug
 
         try:
             # Safely get branch name
@@ -141,6 +149,20 @@ class GitManager:
             metadata["error"] = str(e)
 
         return metadata
+
+    @staticmethod
+    def _extract_repo_slug(repo_url: str) -> Optional[str]:
+        text = str(repo_url or "").strip()
+        if not text:
+            return None
+        m = re.search(r"github\.com[:/]+([^/]+)/([^/.]+)(?:\.git)?/?$", text)
+        if not m:
+            return None
+        owner = m.group(1).strip()
+        repo = m.group(2).strip()
+        if not owner or not repo:
+            return None
+        return f"{owner}/{repo}"
 
     def _get_commit_count(self) -> int:
         """Get total number of commits in the repository."""

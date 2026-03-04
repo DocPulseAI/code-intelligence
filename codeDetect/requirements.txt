@@ -1,28 +1,14 @@
-# Living Documentation Engine - Dependencies
-# Install: pip install -r requirements.txt
-
-# Git operations
-GitPython>=3.1.40
-
-# Tree-sitter AST parsing (US-6, US-8, US-10)
-# Pinned for API compatibility between runtime and bundled grammars.
+GitPython==3.1.43
 tree-sitter==0.21.3
 tree-sitter-languages==1.10.2
-
-# Configuration
-PyYAML>=6.0.1
-protobuf>=5.27.0
-
-# JSON handling (built-in, listed for documentation)
-# json - standard library
-
-# Optional: For enhanced analysis
-chardet>=5.2.0  # Encoding detection for binary safety
-
-# Web service deployment
-flask>=3.0.0  # REST API framework
-gunicorn>=21.0.0  # Production WSGI server
-requests>=2.31.0  # HTTP client
-flask>=3.0.0  # REST API service
-requests>=2.31.0  # HTTP client for integrations
-flasgger>=0.9.7.1  # API documentation (Swagger UI)
+PyYAML==6.0.2
+protobuf==5.29.3
+chardet==5.2.0
+flask==3.1.0
+gunicorn==21.2.0
+requests==2.32.3
+flasgger==0.9.7.1
+jsonschema==4.23.0
+pytest==8.3.4
+pytest-cov==6.0.0
+azure-servicebus==7.13.0

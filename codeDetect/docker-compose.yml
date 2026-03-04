@@ -5,6 +5,8 @@ services:
       - "8080:5000"
     environment:
       - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - SERVICEBUS_CONNECTION_STRING=${SERVICEBUS_CONNECTION_STRING}
+      - SERVICEBUS_QUEUE_NAME=${SERVICEBUS_QUEUE_NAME}
       - PYTHONUNBUFFERED=1
     volumes:
       - ./reports:/app/reports

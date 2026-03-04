@@ -284,7 +284,8 @@ class TreeSitterEngine:
             "exported_classes": [],
             "api_endpoints": []
         }
-        self._traverse_js(root, code, features)
+        route_targets = self._extract_js_route_targets(code)
+        self._traverse_js(root, code, features, route_targets)
         # Preserve legacy symbol extraction behavior/ordering for compatibility.
         legacy_symbols = self._extract_legacy_js_symbols(code)
         features["functions"] = legacy_symbols["functions"]
@@ -294,6 +295,21 @@ class TreeSitterEngine:
 
         features["api_endpoints"] = self._dedupe_endpoint_list(features["api_endpoints"])
         return features
+
+    def _extract_js_route_targets(self, code: str) -> set[str]:
+        """Extract deterministic candidate objects that can own route methods."""
+        targets = {"app", "router"}
+        patterns = [
+            r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*express\.Router\s*\(",
+            r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*Router\s*\(",
+            r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*express\s*\(",
+        ]
+        for rx in patterns:
+            for match in re.finditer(rx, code):
+                symbol = match.group(1).strip()
+                if symbol:
+                    targets.add(symbol)
+        return set(sorted(targets))
 
     def _extract_legacy_js_symbols(self, code: str) -> Dict[str, List[str]]:
         """Compatibility symbol extraction matching previous TS parser behavior."""
@@ -308,7 +324,7 @@ class TreeSitterEngine:
             "exported_classes": self._dedupe_order(exported_classes),
         }
 
-    def _traverse_js(self, node: 'Node', code: str, features: Dict):
+    def _traverse_js(self, node: 'Node', code: str, features: Dict, route_targets: set[str]):
         """Recursively traverse JS/TS AST."""
         if node.type == 'function_declaration':
             name_node = node.child_by_field_name('name')
@@ -334,12 +350,12 @@ class TreeSitterEngine:
             self._extract_exported_js_declarations(node, code, features)
 
         elif node.type == 'call_expression':
-            endpoint = self._extract_express_route(node, code)
+            endpoint = self._extract_express_route(node, code, route_targets)
             if endpoint:
                 features["api_endpoints"].append(endpoint)
 
         for child in node.children:
-            self._traverse_js(child, code, features)
+            self._traverse_js(child, code, features, route_targets)
 
     def _extract_exported_js_declarations(self, export_node: 'Node', code: str, features: Dict):
         """Extract exported function/class names from export statements."""
@@ -362,7 +378,7 @@ class TreeSitterEngine:
                         if func_name:
                             features["exported_functions"].append(func_name)
 
-    def _extract_express_route(self, call_node: 'Node', code: str) -> Optional[Dict[str, Any]]:
+    def _extract_express_route(self, call_node: 'Node', code: str, route_targets: set[str]) -> Optional[Dict[str, Any]]:
         """Extract Express-style app/router endpoint calls."""
         func_node = call_node.child_by_field_name('function')
         args_node = call_node.child_by_field_name('arguments')
@@ -376,7 +392,7 @@ class TreeSitterEngine:
 
         target = self._get_node_text(object_node, code)
         verb = self._get_node_text(property_node, code).lower()
-        if target not in {'app', 'router'} or verb not in {'get', 'post', 'put', 'delete', 'patch'}:
+        if target not in route_targets or verb not in {'get', 'post', 'put', 'delete', 'patch'}:
             return None
 
         route = ""

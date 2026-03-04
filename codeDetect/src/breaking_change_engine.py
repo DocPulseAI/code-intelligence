@@ -33,6 +33,21 @@ def _path_to_openapi(path: str) -> str:
 
 
 def _get_endpoints(report: dict) -> list[dict]:
+    surface = report.get("api_surface")
+    if isinstance(surface, list) and surface:
+        normalized = []
+        for item in surface:
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "method": item.get("method"),
+                    "path": item.get("path"),
+                    "source": {"file": item.get("controller", ""), "handler": item.get("controller", "")},
+                    "request": {"body_schema": {"hash": item.get("request_schema_hash", "")}},
+                }
+            )
+        return normalized
     return list(report.get("api_contract", {}).get("endpoints", []))
 
 
