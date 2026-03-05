@@ -41,8 +41,8 @@ class Epic1ServiceBusWorker:
 
         while not stop_event.is_set():
             conn_str = os.getenv("SERVICE_BUS_CONNECTION_STRING", "").strip()
-            source_queue = os.getenv("EPIC1_QUEUE_NAME", "epic1-impact").strip() or "epic1-impact"
-            next_queue = os.getenv("NEXT_QUEUE_NAME", "epic2-generate").strip() or "epic2-generate"
+            source_queue = os.getenv("EPIC1_QUEUE_NAME", "code-detect-q").strip() or "code-detect-q"
+            next_queue = os.getenv("NEXT_QUEUE_NAME", "docs-gen-q").strip() or "docs-gen-q"
 
             if not conn_str:
                 _log(

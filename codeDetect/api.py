@@ -41,11 +41,312 @@ swagger = Swagger(app, config={
 
 # ===== Service Bus Listener Setup =====
 async def process_message(payload: dict) -> dict:
-    """EPIC-1 business logic stub. Replace with real impact analysis."""
+    """
+    EPIC-1: Perform code impact analysis and format output for EPIC-2.
+    Handles both WebhookQueueMessage (raw webhook) and EpicTaskMessage formats.
+    """
+    import tempfile
+    import subprocess
+    import json
+    from datetime import datetime
+
+    # Determine message format and extract fields
+    # Format 1: EpicTaskMessage (direct from backend after project lookup)
+    if payload.get("taskType") == "analyze":
+        project_id = payload.get("projectId")
+        commit_sha = payload.get("commitSha")
+        branch = payload.get("branch", "main")
+        repo_url = payload.get("repoUrl")
+        github_token = payload.get("githubToken")
+        LOG.info(f"Received EpicTaskMessage format: project={project_id}, repo={repo_url}")
+
+    # Format 2: WebhookQueueMessage (raw GitHub webhook)
+    elif payload.get("source") == "github" and payload.get("event") == "push":
+        github_payload = payload.get("payload", {})
+        project_id = None  # No project ID in raw webhooks
+        repo_url = github_payload.get("repository", {}).get("html_url")
+        if repo_url and not repo_url.endswith('.git'):
+            repo_url = f"{repo_url}.git"
+        branch = (github_payload.get("ref") or "").replace("refs/heads/", "") or "main"
+        commit_sha = github_payload.get("head_commit", {}).get("id")
+        github_token = None  # Not provided in raw webhooks
+        LOG.info(f"Received WebhookQueueMessage format: repo={repo_url}, branch={branch}")
+
+    else:
+        # Unknown format - log and return error structure
+        LOG.error(f"Unknown message format: {list(payload.keys())}")
+        return {
+            "taskType": "generate-docs",
+            "projectId": payload.get("projectId"),
+            "repoUrl": "",
+            "branch": "main",
+            "commitSha": "",
+            "githubToken": None,
+            "payload": {
+                "impact_report": {
+                    "report": {
+                        "files": [],
+                        "api_contract": {"endpoints": []},
+                        "summary": f"Error: Unknown message format - {list(payload.keys())}",
+                        "error": "Unknown message format"
+                    },
+                    "project_id": payload.get("projectId"),
+                    "generated_at": datetime.utcnow().isoformat() + "Z",
+                },
+                "source": "epic1",
+            },
+        }
+
+    if not repo_url:
+        LOG.error("Missing repoUrl in payload")
+        return {
+            "taskType": "generate-docs",
+            "projectId": project_id,
+            "repoUrl": "",
+            "branch": branch,
+            "commitSha": commit_sha,
+            "githubToken": github_token,
+            "payload": {
+                "impact_report": {
+                    "report": {
+                        "files": [],
+                        "api_contract": {"endpoints": []},
+                        "summary": "Error: Missing repository URL",
+                        "error": "Missing repoUrl in payload"
+                    },
+                    "project_id": project_id,
+                    "generated_at": datetime.utcnow().isoformat() + "Z",
+                },
+                "source": "epic1",
+            },
+        }
+
+    try:
+        # Clone and analyze repository using git_manager and analysis modules
+
+        # Import analysis modules
+        from src.git_manager import GitManager
+        from src.file_filter import FileFilter
+        from src.parsers.ts_parser import TSParser
+        from src.parsers.js_parser import JSParser
+        from src.parsers.python_parser import PythonParser
+        from src.parsers.java_parser import JavaParser
+        from src.parsers.schema_detector import SchemaDetector
+        from src.scorers import SeverityCalculator
+        from src.intelligence.tech_stack_model import build_tech_stack
+        from src.intelligence.api_surface import build_api_surface
+
+        LOG.info(f"Analyzing repository: {repo_url} branch: {branch}")
+
+        # Clone the target repository — GitManager clones when given a URL
+        git_mgr = GitManager(repo_url, github_token, branch)
+
+        try:
+            metadata = git_mgr.get_metadata()
+            repo_name = (
+                git_mgr.repo_slug.split("/")[-1] if git_mgr.repo_slug
+                else metadata.get("repository", project_id)
+            )
+
+            # Get changed files; fall back to full file list on error
+            changed_files = []
+            try:
+                changed_files = git_mgr.get_changed_files(commit_sha) if commit_sha else []
+                changed_files = [f for f in changed_files if f.get("change_type") != "ERROR"]
+            except Exception:
+                pass
+
+            # Always get full file inventory for deep analysis
+            all_files = git_mgr.list_all_files()
+            all_file_paths = [f["path"] for f in all_files if f.get("path") and f.get("change_type") != "ERROR"]
+
+            # Build a read_file callback for intelligence modules
+            def _read_file(path):
+                return git_mgr.get_file_content(path)
+
+            # Detect tech stack
+            tech_stack = build_tech_stack(all_file_paths, _read_file)
+            LOG.info(json.dumps({"event": "tech_stack_detected", "stack": tech_stack}, separators=(",", ":")))
+
+            # Determine which files to analyze (changed or all if no changes)
+            files_to_analyze = changed_files if changed_files else all_files
+
+            # Analyze each file: extract features, endpoints, severity
+            changes = []
+            all_endpoints = []
+            all_packages = set()
+            severity_counts = {"MAJOR": 0, "MINOR": 0, "PATCH": 0}
+            database_models = []
+
+            PARSER_MAP = {
+                ".ts": TSParser, ".tsx": TSParser,
+                ".js": JSParser, ".jsx": JSParser,
+                ".py": PythonParser,
+                ".java": JavaParser,
+            }
+
+            for file_entry in files_to_analyze[:200]:
+                fpath = file_entry.get("path", "")
+                if not fpath or FileFilter.should_exclude_from_analysis(fpath):
+                    continue
+
+                ext = os.path.splitext(fpath)[1].lower()
+                content = _read_file(fpath) or ""
+                if not content:
+                    continue
+
+                # Parse file features
+                features = {}
+                parser_cls = PARSER_MAP.get(ext)
+                if parser_cls:
+                    try:
+                        features = parser_cls.analyze(content)
+                    except Exception:
+                        features = {}
+
+                # Detect schema/database tags
+                schema_tags = []
+                try:
+                    schema_tags = SchemaDetector.analyze(fpath, content) or []
+                except Exception:
+                    pass
+
+                # Compute severity
+                sev = SeverityCalculator.assess(ext, features, schema_tags)
+                severity_counts[sev] = severity_counts.get(sev, 0) + 1
+
+                # Classify component
+                path_lower = fpath.lower()
+                if path_lower.startswith(("frontend/", "client/", "src/components/")):
+                    component = "frontend"
+                elif path_lower.startswith(("backend/", "server/", "src/routes/")):
+                    component = "backend"
+                elif any(k in path_lower for k in ("migration", "schema", "model", ".sql")):
+                    component = "database"
+                elif any(k in path_lower for k in ("docker", "terraform", ".github/workflows", "deploy", "infra")):
+                    component = "infra"
+                else:
+                    component = "backend"
+
+                # Collect endpoints
+                endpoints = features.get("api_endpoints", []) or features.get("api_routes", []) or []
+                for ep in endpoints:
+                    all_endpoints.append({
+                        "method": ep.get("verb") or ep.get("method") or "GET",
+                        "path": ep.get("route") or ep.get("path") or "",
+                        "source_file": fpath,
+                        "line": ep.get("line", 0),
+                    })
+
+                # Collect packages/dependencies
+                for dep in features.get("dependencies", []):
+                    all_packages.add(dep)
+
+                # Collect database models
+                if schema_tags:
+                    database_models.append({"file": fpath, "tags": schema_tags})
+
+                changes.append({
+                    "file": fpath,
+                    "change_type": file_entry.get("change_type", "ADDED"),
+                    "component": component,
+                    "severity": sev,
+                    "features": features,
+                    "schema_tags": schema_tags,
+                })
+
+            # Build API surface from detected endpoints
+            api_surface = build_api_surface(all_endpoints) if all_endpoints else []
+
+            # Determine highest severity
+            if severity_counts.get("MAJOR", 0) > 0:
+                highest_severity = "MAJOR"
+            elif severity_counts.get("MINOR", 0) > 0:
+                highest_severity = "MINOR"
+            else:
+                highest_severity = "PATCH"
+
+            generated_at = datetime.utcnow().isoformat() + "Z"
+
+            # Build impact report with actual analysis
+            impact_report = {
+                "report": {
+                    "context": {
+                        "repository": repo_name,
+                        "branch": branch,
+                        "commit_sha": commit_sha,
+                        "full_sha": metadata.get("full_sha", commit_sha),
+                        "author": metadata.get("author", "unknown"),
+                        "author_email": metadata.get("author_email", ""),
+                        "commit_timestamp": metadata.get("intent", {}).get("timestamp", ""),
+                        "generated_at": generated_at,
+                    },
+                    "changes": changes[:100],
+                    "files": [{"path": c["file"], "change_type": c["change_type"], "severity": c["severity"],
+                               "component": c["component"], "features": c.get("features", {})}
+                              for c in changes[:100]],
+                    "api_contract": {
+                        "endpoints": all_endpoints[:200],
+                    },
+                    "api_surface": api_surface,
+                    "affected_packages": sorted(all_packages),
+                    "analysis_summary": {
+                        "highest_severity": highest_severity,
+                        "breaking_changes_detected": severity_counts.get("MAJOR", 0) > 0,
+                        "total_files_analyzed": len(changes),
+                        "severity_distribution": severity_counts,
+                    },
+                    "database_impact": {
+                        "models": database_models,
+                        "model_count": len(database_models),
+                    },
+                    "infra_analysis": {
+                        "docker": "docker" in (tech_stack.get("infra") or []),
+                        "ci_workflow": (tech_stack.get("ci") or [None])[0] if tech_stack.get("ci") else None,
+                    },
+                    "tech_stack": tech_stack,
+                    "summary": f"Analyzed {len(changes)} files: {len(all_endpoints)} endpoints, stack={tech_stack.get('backend_framework') or 'unknown'}",
+                    "commit_sha": commit_sha,
+                    "branch": branch,
+                },
+                "project_id": project_id,
+                "generated_at": generated_at,
+            }
+
+            LOG.info(json.dumps({
+                "event": "analysis_complete",
+                "files": len(changes),
+                "endpoints": len(all_endpoints),
+                "tech_stack": tech_stack,
+            }, separators=(",", ":")))
+        finally:
+            git_mgr.cleanup()
+
+    except Exception as e:
+        LOG.error(f"Analysis failed: {str(e)}")
+        # Return minimal valid structure on error so pipeline continues
+        impact_report = {
+            "report": {
+                "files": [],
+                "api_contract": {"endpoints": []},
+                "summary": f"Analysis error: {str(e)}",
+                "error": str(e),
+            },
+            "project_id": project_id,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
+        }
+
     return {
-        "epic": "epic1",
-        "status": "processed",
-        "input": payload,
+        "taskType": "generate-docs",
+        "projectId": project_id,
+        "repoUrl": repo_url,
+        "branch": branch,
+        "commitSha": commit_sha,
+        "githubToken": github_token,
+        "payload": {
+            "impact_report": impact_report,
+            "source": "epic1",
+        },
     }
 
 

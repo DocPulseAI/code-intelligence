@@ -187,6 +187,95 @@ with:
 
 ---
 
+### 10. **Missing --container-name Parameter in az containerapp update**
+**Issue:** `Field 'template.containers.code-detect.image' is invalid` - still trying to deploy with old SHA tag
+- Even after fixing the registry set command, the update wasn't applying the image change
+- Container app still configured with stale SHA tag from previous failed deployments
+- Deployment kept failing: `MANIFEST_UNKNOWN: manifest tagged by "SHA"...not found`
+
+**Root Cause:** The `az containerapp update --image` command needs explicit `--container-name` parameter to know which container in the template to update. Without it, the update may fail silently or apply to wrong container.
+
+**Fix:**
+```bash
+# ❌ WRONG
+az containerapp update \
+  --name code-detect \
+  --resource-group DocPulse \
+  --image docpulseresgistry.azurecr.io/code-detect:latest
+  # Missing: --container-name (update doesn't know which container to modify)
+
+# ✅ CORRECT
+az containerapp update \
+  --name code-detect \
+  --resource-group DocPulse \
+  --container-name code-detect \
+  --image docpulseresgistry.azurecr.io/code-detect:latest
+```
+
+**Key Learning:**
+- Container apps can have multiple containers (though code-detect only has one named `code-detect`)
+- `--container-name` explicitly specifies which container's image to update
+- Without it, the command may not apply the change or apply to the wrong container
+- Always match the container name with what's in the container app definition
+
+---
+
+### 11. **Stale SHA Tag in Container App Template (Manual Portal Creation)**
+**Issue:** `MANIFEST_UNKNOWN: manifest tagged by "6655078d79..."` persists even after all fixes
+- Container app was manually created in Azure Portal with a specific SHA tag configured
+- That SHA-tagged image was never pushed to ACR (early workflow runs failed before push)
+- `az containerapp update --container-name --image ...latest` wasn't fully replacing the old SHA reference
+- Azure Portal UI showed "latest" but underlying template still had old SHA hardcoded
+- Deployments failed continuously: "Field 'template.containers.code-detect.image'" error
+- Even revision 0000005 (latest) failed trying to pull non-existent SHA image
+
+**Root Cause:** When manually creating container apps in Azure Portal, the template gets hardcoded with the initial image tag. The `az containerapp update --image` command tries to **modify** the existing revision template, which still has the old SHA embedded. It doesn't create a completely fresh template.
+
+**Fix:**
+```bash
+# ❌ WRONG - modifies existing template, old SHA persists
+az containerapp update \
+  --name code-detect \
+  --resource-group DocPulse \
+  --container-name code-detect \
+  --image docpulseresgistry.azurecr.io/code-detect:latest
+  # This tries to modify existing template, inheritance from old revision
+
+# ✅ CORRECT - forces completely new revision from scratch
+az containerapp update \
+  --name code-detect \
+  --resource-group DocPulse \
+  --image docpulseresgistry.azurecr.io/code-detect:latest \
+  --revision-suffix "r$(date +%s)"
+  # --revision-suffix creates brand new revision template (code-detect--r1709569632)
+```
+
+**Key Learning:**
+- `--revision-suffix` forces Azure to create a **completely new revision template** instead of modifying existing one
+- Use unique suffix like `"r$(date +%s)"` for timestamp-based revision names
+- This bypasses any stale configuration in previous revision templates
+- Without this, the update command inherits template from previous revision (which had bad SHA)
+- **Best practice:** Create container apps via Infrastructure-as-Code (Bicep/Terraform), not Portal, to avoid configuration drift
+
+**Alternative Solution (Nuclear Option if revision-suffix doesn't work):**
+```bash
+# Delete and recreate from scratch
+az containerapp delete --name code-detect --resource-group DocPulse --yes
+az containerapp create \
+  --name code-detect \
+  --resource-group DocPulse \
+  --environment <env-name> \
+  --image docpulseresgistry.azurecr.io/code-detect:latest \
+  --registry-server docpulseresgistry.azurecr.io \
+  --registry-username "${{ secrets.CODEDETECT_REGISTRY_USERNAME }}" \
+  --registry-password "${{ secrets.CODEDETECT_REGISTRY_PASSWORD }}" \
+  --ingress external \
+  --target-port 5000 \
+  --cpu 0.5 --memory 1.0Gi
+```
+
+---
+
 ### 7. **Azure Deploy Action Ignores imageToDeploy Parameter (SHA Tag Override)**
 **Issue:** Even after adding `imageToDeploy`, the action still tried to deploy with git commit SHA tag
 - `azure/container-apps-deploy-action@v2` was overriding the `imageToDeploy` with its own commit SHA logic
