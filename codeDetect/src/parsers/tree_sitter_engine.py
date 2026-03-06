@@ -376,8 +376,15 @@ class TreeSitterEngine:
             "exported_classes": self._dedupe_order(exported_classes),
         }
 
-    def _traverse_js(self, node: 'Node', code: str, features: Dict, route_targets: set[str]):
-        """Recursively traverse JS/TS AST."""
+    def _traverse_js(self, node: 'Node', code: str, features: Dict, route_targets: set[str], context: Dict = None):
+        """Recursively traverse JS/TS AST.
+        
+        Args:
+            context: Carries down class-level state (e.g., base path, class name for NestJS)
+        """
+        if context is None:
+            context = {"class_name": "", "base_path": ""}
+
         if node.type == 'function_declaration':
             name_node = node.child_by_field_name('name')
             if name_node:
@@ -395,8 +402,73 @@ class TreeSitterEngine:
 
         elif node.type == 'class_declaration':
             name_node = node.child_by_field_name('name')
+            class_name = ""
+            base_path = ""
             if name_node:
-                features["classes"].append(self._get_node_text(name_node, code))
+                class_name = self._get_node_text(name_node, code)
+                features["classes"].append(class_name)
+
+            # Check for NestJS @Controller decorator
+            prev_node = node.prev_sibling
+            while prev_node and prev_node.type == 'decorator':
+                # The node is a call_expression inside the decorator
+                call_node = prev_node.child(1) if prev_node.child_count > 1 else None
+                if call_node and call_node.type == 'call_expression':
+                    func_node = call_node.child_by_field_name('function')
+                    if func_node and self._get_node_text(func_node, code) == 'Controller':
+                        args_node = call_node.child_by_field_name('arguments')
+                        if args_node and args_node.child_count > 2: # '(', arg, ')'
+                            first_arg = args_node.children[1]
+                            if first_arg.type in ('string', 'string_fragment', 'template_string'):
+                                base_path = self._get_node_text(first_arg, code).strip('"`\'')
+
+                prev_node = prev_node.prev_sibling
+
+            new_context = {"class_name": class_name, "base_path": base_path}
+            for child in node.children:
+                self._traverse_js(child, code, features, route_targets, new_context)
+            return
+
+        elif node.type == 'method_definition':
+            name_node = node.child_by_field_name('name')
+            method_name = ""
+            if name_node:
+                method_name = self._get_node_text(name_node, code)
+                
+            # Check for NestJS @Get, @Post, etc. decorators
+            prev_node = node.prev_sibling
+            while prev_node and prev_node.type == 'decorator':
+                call_node = prev_node.child(1) if prev_node.child_count > 1 else None
+                if call_node and call_node.type == 'call_expression':
+                    func_node = call_node.child_by_field_name('function')
+                    if func_node:
+                        func_name = self._get_node_text(func_node, code)
+                        if func_name in ('Get', 'Post', 'Put', 'Delete', 'Patch', 'Options', 'Head', 'All'):
+                            method_route = ""
+                            args_node = call_node.child_by_field_name('arguments')
+                            if args_node and args_node.child_count > 2:
+                                first_arg = args_node.children[1]
+                                if first_arg.type in ('string', 'string_fragment', 'template_string'):
+                                    method_route = self._get_node_text(first_arg, code).strip('"`\'')
+                            
+                            base_path = context.get('base_path', '')
+                            route = method_route
+                            if base_path:
+                                normalized_base = base_path.rstrip('/')
+                                normalized_method = method_route if method_route.startswith('/') else f"/{method_route}" if method_route else ""
+                                route = f"{normalized_base}{normalized_method}"
+                                
+                            class_name = context.get('class_name', '')
+                            handler = f"{class_name}.{method_name}" if class_name and method_name else method_name
+                            
+                            features["api_endpoints"].append({
+                                "verb": func_name.upper(),
+                                "route": route,
+                                "line": prev_node.start_point[0] + 1,
+                                "handler": handler,
+                                "router_symbol": class_name,
+                            })
+                prev_node = prev_node.prev_sibling
 
         elif node.type == 'export_statement':
             self._extract_exported_js_declarations(node, code, features)
@@ -407,7 +479,7 @@ class TreeSitterEngine:
                 features["api_endpoints"].append(endpoint)
 
         for child in node.children:
-            self._traverse_js(child, code, features, route_targets)
+            self._traverse_js(child, code, features, route_targets, context)
 
     def _extract_exported_js_declarations(self, export_node: 'Node', code: str, features: Dict):
         """Extract exported function/class names from export statements."""

@@ -442,11 +442,11 @@ class TestDeterminism:
         },
         "backend/src/routes/a.routes.js": {
             "functions": ["aHandler"],
-            "api_endpoints": [{"verb": "GET", "route": "/a", "line": 1}],
+            "api_endpoints": [{"verb": "POST", "route": "/a", "line": 5}],
         },
         "backend/src/services/b.service.js": {
             "classes": ["BService"],
-            "functions": ["doB"],
+            "functions": ["fetchB"],
         },
         "backend/src/services/a.service.js": {
             "classes": ["AService"],
