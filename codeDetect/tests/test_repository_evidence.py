@@ -219,8 +219,8 @@ class TestJavaSpring:
             "methods": ["getUser", "createUser"],
             "annotations": ["@RestController", "@RequestMapping", "@GetMapping", "@PostMapping"],
             "api_endpoints": [
-                {"verb": "GET", "route": "/api/users/{id}", "line": 10},
-                {"verb": "POST", "route": "/api/users", "line": 15},
+                {"verb": "GET", "route": "/api/users/{id}", "line": 10, "handler": "UserController.getUser", "router_symbol": "UserController"},
+                {"verb": "POST", "route": "/api/users", "line": 15, "handler": "UserController.createUser", "router_symbol": "UserController"},
             ],
         },
         "src/main/java/com/app/service/UserService.java": {
@@ -264,6 +264,11 @@ class TestJavaSpring:
         assert "UserController" in router_names
         controller = next(r for r in ev["routers"] if r["name"] == "UserController")
         assert controller["type"] == "spring_controller"
+        
+        # Verify APIs for Java endpoints mapping
+        apis = {(a["method"], a["path"], a["controller"]) for a in ev["apis"]}
+        assert ("GET", "/api/users/{id}", "UserController.getUser") in apis
+        assert ("POST", "/api/users", "UserController.createUser") in apis
 
     def test_spring_service_detected(self):
         ev = build_repository_evidence(
@@ -300,10 +305,12 @@ class TestPythonFlask:
         "app/routes/auth.py": {
             "functions": ["login", "register"],
             "decorators": ["app.route('/login', methods=['POST'])", "app.route('/register', methods=['POST'])"],
-            "api_routes": [
-                {"route": "/login", "line": 5, "decorator": "@app.route('/login')"},
-                {"route": "/register", "line": 10, "decorator": "@app.route('/register')"},
+            "api_endpoints": [
+                {"verb": "USE", "route": "/api/auth", "line": 2, "handler": "auth_bp", "router_symbol": "app"},
+                {"verb": "POST", "route": "/login", "line": 5, "handler": "login", "router_symbol": "auth_bp"},
+                {"verb": "POST", "route": "/register", "line": 10, "handler": "register", "router_symbol": "auth_bp"},
             ],
+            "api_routes": [],
         },
         "app/models/user.py": {
             "classes": ["User"],
@@ -345,6 +352,11 @@ class TestPythonFlask:
         )
         router_names = [r["name"] for r in ev["routers"]]
         assert "auth_bp" in router_names
+        
+        # Verify Python API endpoint mount prefixes
+        apis = {(a["method"], a["path"], a["controller"]) for a in ev["apis"]}
+        assert ("POST", "/api/auth/login", "login") in apis
+        assert ("POST", "/api/auth/register", "register") in apis
 
     def test_django_model_entity(self):
         ev = build_repository_evidence(

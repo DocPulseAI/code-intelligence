@@ -201,11 +201,40 @@ class TreeSitterEngine:
         self._traverse_java(root, code, features)
         return features
 
-    def _traverse_java(self, node: 'Node', code: str, features: Dict):
-        """Recursively traverse Java AST."""
-
+    def _traverse_java(self, node: 'Node', code: str, features: Dict, context: Dict = None):
+        """Recursively traverse Java AST.
+        
+        Args:
+            context: Carries down class-level state (e.g. base path, class name)
+        """
+        if context is None:
+            context = {"class_name": "", "base_path": ""}
+            
         # Class declarations
         if node.type == 'class_declaration':
+            name_node = node.child_by_field_name('name')
+            class_name = ""
+            base_path = ""
+            if name_node:
+                class_name = self._get_node_text(name_node, code)
+                features["classes"].append(class_name)
+                
+            # Look for class-level RequestMapping
+            modifiers = node.child_by_field_name('modifiers')
+            if modifiers:
+                for mod in modifiers.children:
+                    if mod.type == 'annotation' and mod.child_by_field_name('name'):
+                        ann_name = self._get_node_text(mod.child_by_field_name('name'), code)
+                        if ann_name == 'RequestMapping':
+                            base_path = self._extract_annotation_value(mod, code)
+            
+            # Update context for children
+            new_context = {"class_name": class_name, "base_path": base_path}
+            for child in node.children:
+                self._traverse_java(child, code, features, new_context)
+            return
+
+        # Method declarations
             name_node = node.child_by_field_name('name')
             if name_node:
                 features["classes"].append(self._get_node_text(name_node, code))
@@ -232,11 +261,34 @@ class TreeSitterEngine:
                 # Check for API annotations
                 if ann_name in ['GetMapping', 'PostMapping', 'PutMapping',
                                'DeleteMapping', 'PatchMapping', 'RequestMapping']:
-                    route = self._extract_annotation_value(node, code)
+                    
+                    method_route = self._extract_annotation_value(node, code)
+                    base_path = context.get("base_path", "")
+                    
+                    # Combine base path and method path
+                    route = method_route
+                    if base_path:
+                        normalized_base = base_path.rstrip('/')
+                        normalized_method = method_route if method_route.startswith('/') else f"/{method_route}" if method_route else ""
+                        route = f"{normalized_base}{normalized_method}"
+                        
+                    # Find method name for handler
+                    method_name = ""
+                    method_decl = node.parent.parent if node.parent and node.parent.parent and node.parent.parent.type == 'method_declaration' else None
+                    if method_decl:
+                        name_node = method_decl.child_by_field_name('name')
+                        if name_node:
+                            method_name = self._get_node_text(name_node, code)
+                            
+                    class_name = context.get("class_name", "")
+                    handler = f"{class_name}.{method_name}" if class_name and method_name else method_name
+
                     features["api_endpoints"].append({
                         "verb": ann_name.replace('Mapping', '').upper() or 'REQUEST',
                         "route": route,
-                        "line": node.start_point[0] + 1
+                        "line": node.start_point[0] + 1,
+                        "handler": handler,
+                        "router_symbol": class_name,
                     })
 
                 # Check for schema annotations
@@ -260,7 +312,7 @@ class TreeSitterEngine:
 
         # Recurse
         for child in node.children:
-            self._traverse_java(child, code, features)
+            self._traverse_java(child, code, features, context)
 
     def _extract_annotation_value(self, node: 'Node', code: str) -> str:
         """Extract value from annotation arguments."""
@@ -471,11 +523,107 @@ class TreeSitterEngine:
     def _traverse_python(self, node: 'Node', code: str, features: Dict):
         """Recursively traverse Python AST."""
 
+        # Handle router prefix mounts: app.include_router(..., prefix=...) or app.register_blueprint(..., url_prefix=...)
+        if node.type == 'call':
+            func_node = node.child_by_field_name('function')
+            if func_node:
+                func_text = self._get_node_text(func_node, code)
+                if func_text.endswith('.include_router') or func_text.endswith('.register_blueprint'):
+                    args_node = node.child_by_field_name('arguments')
+                    if args_node:
+                        # Extract the router/blueprint name
+                        router_name = ""
+                        if len(args_node.children) > 1 and args_node.children[1].type == 'identifier':
+                            router_name = self._get_node_text(args_node.children[1], code)
+                        
+                        # Find prefix argument
+                        prefix = ""
+                        for child in args_node.children:
+                            if child.type == 'keyword_argument':
+                                name_node = child.child_by_field_name('name')
+                                value_node = child.child_by_field_name('value')
+                                if name_node and value_node and self._get_node_text(name_node, code) in ('prefix', 'url_prefix'):
+                                    if value_node.type == 'string':
+                                        prefix = self._get_node_text(value_node, code).strip('"\'')
+                        
+                        if router_name and prefix:
+                            # We record this as a "USE" mount point to simulate Express route_resolution_engine mounting
+                            features["api_endpoints"].append({
+                                "verb": "USE",
+                                "route": prefix,
+                                "handler": router_name,  # The module/router being mounted
+                                "router_symbol": func_text.split('.')[0] if '.' in func_text else "app",
+                                "line": node.start_point[0] + 1
+                            })
+                            
+        # Handle router initialization with prefix: router = APIRouter(prefix=...)
+        elif node.type == 'assignment':
+            left = node.child_by_field_name('left')
+            right = node.child_by_field_name('right')
+            if left and right and left.type == 'identifier' and right.type == 'call':
+                func_node = right.child_by_field_name('function')
+                if func_node and self._get_node_text(func_node, code) in ('APIRouter', 'Blueprint'):
+                    router_name = self._get_node_text(left, code)
+                    args_node = right.child_by_field_name('arguments')
+                    if args_node:
+                        for child in args_node.children:
+                            if child.type == 'keyword_argument':
+                                name_node = child.child_by_field_name('name')
+                                value_node = child.child_by_field_name('value')
+                                if name_node and value_node and self._get_node_text(name_node, code) in ('prefix', 'url_prefix'):
+                                    if value_node.type == 'string':
+                                        prefix = self._get_node_text(value_node, code).strip('"\'')
+                                        # Record the self-prefix
+                                        if 'router_prefixes' not in features:
+                                            features['router_prefixes'] = {}
+                                        features['router_prefixes'][router_name] = prefix
+
         # Function definitions
-        if node.type == 'function_definition':
+        elif node.type == 'function_definition':
             name_node = node.child_by_field_name('name')
+            func_name = ""
             if name_node:
-                features["functions"].append(self._get_node_text(name_node, code))
+                func_name = self._get_node_text(name_node, code)
+                features["functions"].append(func_name)
+
+            # Check if this function has decorators that define routes
+            has_route = False
+            prev_node = node.prev_sibling
+            while prev_node and prev_node.type == 'decorator':
+                dec_text = self._get_node_text(prev_node, code)
+                features["decorators"].append(dec_text)
+
+                # Check for API routes
+                if any(pattern in dec_text for pattern in ['@app.route', '@router.', '@auth_bp.', '@api.']):
+                    has_route = True
+                    route = self._extract_decorator_route(dec_text)
+                    method = self._extract_decorator_method(dec_text) # New helper to extract methods=["POST"] or @router.post
+                    
+                    # Extract router_symbol (e.g. app from @app.route)
+                    router_symbol = "app"
+                    call_node = prev_node.child(1) # The call/attribute inside the decorator
+                    if call_node:
+                        if call_node.type == 'call':
+                            func_attr = call_node.child_by_field_name('function')
+                            if func_attr and func_attr.type == 'attribute':
+                                obj_node = func_attr.child_by_field_name('object')
+                                if obj_node:
+                                    router_symbol = self._get_node_text(obj_node, code)
+                        elif call_node.type == 'attribute':
+                            obj_node = call_node.child_by_field_name('object')
+                            if obj_node:
+                                router_symbol = self._get_node_text(obj_node, code)
+
+                    features["api_endpoints"].append({
+                        "verb": method,
+                        "route": route,
+                        "line": prev_node.start_point[0] + 1,
+                        "handler": func_name,
+                        "router_symbol": router_symbol,
+                        "decorator": dec_text  # Keep for backward compatibility
+                    })
+                    
+                prev_node = prev_node.prev_sibling
 
             # Extract docstring
             body = node.child_by_field_name('body')
@@ -495,20 +643,6 @@ class TreeSitterEngine:
             if name_node:
                 features["classes"].append(self._get_node_text(name_node, code))
 
-        # Decorators
-        elif node.type == 'decorator':
-            dec_text = self._get_node_text(node, code)
-            features["decorators"].append(dec_text)
-
-            # Check for API routes
-            if any(pattern in dec_text for pattern in ['@app.route', '@router.', '@api.']):
-                route = self._extract_decorator_route(dec_text)
-                features["api_routes"].append({
-                    "decorator": dec_text,
-                    "route": route,
-                    "line": node.start_point[0] + 1
-                })
-
         # Import statements
         elif node.type in ['import_statement', 'import_from_statement']:
             features["imports"].append(self._get_node_text(node, code).strip())
@@ -527,6 +661,22 @@ class TreeSitterEngine:
         # Recurse
         for child in node.children:
             self._traverse_python(child, code, features)
+
+    def _extract_decorator_method(self, decorator: str) -> str:
+        """Extract HTTP method from decorator (e.g. methods=['POST'] or @router.post)."""
+        import re
+        decorator_lower = decorator.lower()
+        if 'methods=' in decorator_lower or 'methods =' in decorator_lower:
+            match = re.search(r'methods\s*=\s*\[?["\']([A-Z]+)["\']\]?', decorator, re.IGNORECASE)
+            if match:
+                return match.group(1).upper()
+        
+        # Check for fastapi-style explicit method decorators
+        for method in ['get', 'post', 'put', 'delete', 'patch']:
+            if f".{method}(" in decorator_lower:
+                return method.upper()
+                
+        return "GET" # default
 
     def _extract_decorator_route(self, decorator: str) -> str:
         """Extract route path from decorator."""

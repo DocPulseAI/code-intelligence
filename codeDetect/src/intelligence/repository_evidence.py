@@ -178,6 +178,32 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
             # If route_resolution_engine is unavailable, fall through.
             pass
 
+    # ---- Python router prefix resolution ----
+    # Python files may have internal router_prefixes (e.g. APIRouter(prefix="/api"))
+    # or AST "USE" entries for app.include_router(..., prefix=...)
+    for path in sorted(file_paths):
+        if not path.lower().endswith(".py"):
+            continue
+        feats = features_map.get(path, {})
+        # 1. Local prefixes from router instantiation
+        local_prefixes = feats.get("router_prefixes", {})
+        
+        # 2. Extract USE verbs representing mounts (app.include_router, app.register_blueprint)
+        # Note: We only map intra-file or simple string mappings here without a full graph.
+        endpoints = feats.get("api_endpoints", []) or feats.get("api_routes", []) or []
+        for ep in endpoints:
+            if not isinstance(ep, dict):
+                continue
+            if str(ep.get("verb")).upper() == "USE":
+                mount_route = str(ep.get("route", ""))
+                handler_symbol = str(ep.get("handler", ""))
+                if mount_route and handler_symbol:
+                    # Map the handler symbol to its prefix
+                    local_prefixes[handler_symbol] = mount_route
+                    
+        # Apply the merged prefix back to features map for endpoint resolution below
+        feats["router_prefixes_resolved"] = local_prefixes
+
     # ---- Collect endpoints ----
     apis: list[dict] = []
     seen: set[tuple[str, str, str]] = set()
@@ -191,15 +217,27 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
             if not isinstance(ep, dict):
                 continue
             method = str(ep.get("verb") or ep.get("method") or "GET").upper()
+            if method == "USE":
+                continue # Skip mount points internally
+                
             raw_route = str(ep.get("route") or ep.get("path") or "")
             line = int(ep.get("line", 0))
             handler = str(ep.get("handler") or ep.get("controller") or "")
+            router_symbol = str(ep.get("router_symbol", ""))
 
             # Resolve full path with mount prefix.
-            if prefix and raw_route:
-                full_path = prefix.rstrip("/") + "/" + raw_route.lstrip("/")
-            elif prefix:
-                full_path = prefix
+            # 1. Express cross-file prefix
+            # 2. Python local router/blueprint prefix
+            resolved_prefix = prefix
+            if path.lower().endswith(".py"):
+                local_prefs = feats.get("router_prefixes_resolved", {})
+                if router_symbol in local_prefs:
+                    resolved_prefix = local_prefs[router_symbol]
+
+            if resolved_prefix and raw_route:
+                full_path = resolved_prefix.rstrip("/") + "/" + raw_route.lstrip("/")
+            elif resolved_prefix:
+                full_path = resolved_prefix
             else:
                 full_path = raw_route
 
