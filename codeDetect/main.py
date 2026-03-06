@@ -61,6 +61,7 @@ def main():
         from src.intelligence.architecture_model import build_architecture_model
         from src.intelligence.data_model_graph import build_data_model
         from src.intelligence.schema_diff_engine import extract_canonical_models, diff_schema_models
+        from src.intelligence.repository_evidence import build_repository_evidence
         from src.breaking_change_engine import compare_reports
         from src.risk_scoring import score_report_risk
         from src.baseline_store import BaselineStore
@@ -111,6 +112,8 @@ def main():
             all_packages = set()
             severity_counts = {"MAJOR": 0, "MINOR": 0, "PATCH": 0}
             database_models = []
+            file_features: dict[str, dict] = {}
+            file_schema_tags: dict[str, list] = {}
 
             PARSER_MAP = {
                 ".ts": TSParser, ".tsx": TSParser,
@@ -180,6 +183,10 @@ def main():
                 if schema_tags:
                     database_models.append({"file": path, "tags": schema_tags})
 
+                # Collect per-file features for repository evidence
+                file_features[path] = features
+                file_schema_tags[path] = schema_tags
+
                 changes.append({
                     "file": path,
                     "change_type": file_entry.get("change_type", "ADDED"),
@@ -201,6 +208,12 @@ def main():
 
             LOG.info("Extracting canonical schema models...")
             schema_models = extract_canonical_models(all_file_paths, read_file)
+
+            # Build repository evidence graph
+            LOG.info("Building repository evidence...")
+            repository_evidence = build_repository_evidence(
+                all_file_paths, read_file, file_features, file_schema_tags, tech_stack
+            )
 
             # Classify repository
             LOG.info("Classifying repository type...")
@@ -367,6 +380,7 @@ def main():
                         "static_assets": [],
                         "dev_dependencies": [],
                     },
+                    "repository_evidence": repository_evidence,
                 },
             }
 

@@ -401,10 +401,22 @@ class TreeSitterEngine:
                 route = self._get_node_text(arg, code).strip('"\'')
                 break
 
+        # Extract handler: last non-string, non-punctuation argument
+        handler = ""
+        skip_types = {'string', 'string_fragment', ',', '(', ')'}
+        last_meaningful_arg = None
+        for arg in args_node.children:
+            if arg.type not in skip_types and self._get_node_text(arg, code).strip():
+                last_meaningful_arg = arg
+        if last_meaningful_arg:
+            handler = self._get_node_text(last_meaningful_arg, code).strip()
+
         return {
             "verb": verb.upper(),
             "route": route,
-            "line": call_node.start_point[0] + 1
+            "line": call_node.start_point[0] + 1,
+            "handler": handler,
+            "router_symbol": target,
         }
 
     def _extract_js_variable_name(self, declarator_node: 'Node', code: str) -> str:
