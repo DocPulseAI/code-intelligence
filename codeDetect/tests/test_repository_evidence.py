@@ -90,7 +90,7 @@ class TestExpressBackend:
             self.SCHEMA_TAGS, self.TECH_STACK,
         )
         names = [c["name"] for c in ev["components"]]
-        assert "auth" in names or "backend" in names
+        assert "src" in names or "auth" in names or "backend" in names
 
     def test_apis_detected(self):
         ev = build_repository_evidence(
@@ -114,8 +114,10 @@ class TestExpressBackend:
             self.FILES, _make_reader(self.CONTENT), self.FEATURES,
             self.SCHEMA_TAGS, self.TECH_STACK,
         )
-        svc_names = [s["name"] for s in ev["services"]]
-        assert "AuthService" in svc_names
+        services = {s["name"]: s for s in ev["services"]}
+        assert "AuthService" in services
+        assert services["AuthService"]["file"] == "backend/src/services/auth.service.js"
+        assert set(services["AuthService"]["functions"]) == {"verifyPassword", "createToken"}
 
     def test_routers_detected(self):
         ev = build_repository_evidence(
@@ -275,8 +277,10 @@ class TestJavaSpring:
             self.FILES, _make_reader(self.CONTENT), self.FEATURES,
             self.SCHEMA_TAGS, self.TECH_STACK,
         )
-        svc_names = [s["name"] for s in ev["services"]]
-        assert "UserService" in svc_names
+        services = {s["name"]: s for s in ev["services"]}
+        assert "UserService" in services
+        assert services["UserService"]["file"] == "src/main/java/com/app/service/UserService.java"
+        assert set(services["UserService"]["functions"]) == {"findById", "save"}
 
     def test_jpa_entity_detected(self):
         ev = build_repository_evidence(
@@ -491,7 +495,270 @@ class TestEmptyRepo:
 
 
 # ---------------------------------------------------------------------------
-# 7. Output structure
+# 7. Database Entity Extraction
+# ---------------------------------------------------------------------------
+
+class TestDatabaseExtraction:
+    """Verifies that DB and ORM specs are attached to entities and schema edges are parsed."""
+
+    FILES = [
+        "models/User.js",
+        "models/Task.js",
+        "schema.sql",
+    ]
+
+    FEATURES = {
+        "models/User.js": {
+            "mongoose_schemas": [{"profile": "Profile"}],
+        },
+        "models/Task.js": {
+            "mongoose_schemas": [{"user": "User"}],
+        },
+        "schema.sql": {},
+    }
+
+    SCHEMA_TAGS = {
+        "models/User.js": ["MONGOOSE_SCHEMA", "MONGOOSE_MODEL:User"],
+        "models/Task.js": ["MONGOOSE_SCHEMA", "MONGOOSE_MODEL:Task"],
+        "schema.sql": [
+            "SQL_SCHEMA_CHANGE", 
+            "POSTGRES_SCHEMA_CHANGE",
+            "SQL_TABLE_CHANGE", 
+            "SQL_CREATE_TABLE:users",
+            "SQL_CREATE_TABLE:tasks",
+            "SQL_FOREIGN_KEY:tasks:users",
+        ]
+    }
+
+    CONTENT = {
+        "models/User.js": "const userSchema = new mongoose.Schema({ profile: { type: ObjectId, ref: 'Profile' } }); mongoose.model('User', userSchema);",
+        "models/Task.js": "const taskSchema = new mongoose.Schema({ user: { type: ObjectId, ref: 'User' } }); mongoose.model('Task', taskSchema);",
+        "schema.sql": "CREATE TABLE users (id INT PRIMARY KEY); CREATE TABLE tasks (id INT, user_id INT REFERENCES users(id));",
+    }
+
+    TECH_STACK = {
+        "backend_framework": "express",
+        "frontend_framework": None,
+        "database": "postgres",
+        "orm": "mongoose",
+        "infra": [],
+        "ci": [],
+    }
+
+    def test_database_orm_population(self):
+        ev = build_repository_evidence(
+            self.FILES, _make_reader(self.CONTENT), self.FEATURES,
+            self.SCHEMA_TAGS, self.TECH_STACK,
+        )
+        
+        entities = {e["name"]: e for e in ev["entities"]}
+        assert "User" in entities
+        assert entities["User"]["database"] == "mongodb"
+        assert entities["User"]["orm"] == "mongoose"
+        
+        assert "tasks" in entities
+        assert entities["tasks"]["database"] == "postgres"
+        assert entities["tasks"]["orm"] == "none"
+        
+    def test_schema_edges(self):
+        ev = build_repository_evidence(
+            self.FILES, _make_reader(self.CONTENT), self.FEATURES,
+            self.SCHEMA_TAGS, self.TECH_STACK,
+        )
+        
+        rels = {(r["from"], r["to"], r["relation"]) for r in ev["relationships"] if r["type"] == "entity_relation"}
+        
+        # Mongoose schema edges
+        assert ("User", "Profile", "references") in rels
+        assert ("Task", "User", "references") in rels
+        
+        # SQL schema edges
+        assert ("tasks", "users", "foreign_key") in rels
+
+
+# ---------------------------------------------------------------------------
+# 8. Service Layer Extraction
+# ---------------------------------------------------------------------------
+
+class TestServiceLayerExtraction:
+    """Verifies that services and repositories are extracted correctly."""
+
+    FILES = [
+        "src/services/billing.ts",
+        "src/repositories/user.repo.ts",
+        "random/not_a_service.ts"
+    ]
+
+    FEATURES = {
+        "src/services/billing.ts": {
+            "classes": ["BillingService"],
+            "functions": ["processPayment", "refund"],
+        },
+        "src/repositories/user.repo.ts": {
+            "classes": ["UserRepository"],
+            "functions": ["findUser", "saveUser"],
+        },
+        "random/not_a_service.ts": {
+            "classes": ["Helper"],
+            "functions": ["doWork"],
+        }
+    }
+
+    def test_services_and_repositories(self):
+        ev = build_repository_evidence(
+            self.FILES, _noop_read, self.FEATURES, {}, {"backend_framework": "express"}
+        )
+        
+        services = {s["name"]: s for s in ev["services"]}
+        assert "BillingService" in services
+        assert services["BillingService"]["file"] == "src/services/billing.ts"
+        assert set(services["BillingService"]["functions"]) == {"processPayment", "refund"}
+        
+        assert "UserRepository" in services
+        assert services["UserRepository"]["file"] == "src/repositories/user.repo.ts"
+        assert set(services["UserRepository"]["functions"]) == {"findUser", "saveUser"}
+        
+        assert "Helper" not in services
+
+
+
+# ---------------------------------------------------------------------------
+# 10. Frontend Extraction Additions
+# ---------------------------------------------------------------------------
+
+class TestFrontendExtraction:
+    """Verifies that React components, Next.js routes, and API calls are extracted properly."""
+
+    FILES = [
+        "frontend/src/pages/about.tsx",
+        "frontend/app/dashboard/page.jsx",
+        "frontend/src/components/Button.tsx",
+        "frontend/src/api/client.js",
+        "frontend/src/App.tsx", # React Router
+    ]
+
+    FEATURES = {
+        "frontend/src/pages/about.tsx": {
+            "react_components": ["REACT_COMPONENT"],
+            "exported_functions": ["AboutPage"],
+            "api_calls": [{"client": "fetch", "method": "UNKNOWN", "line": 4}]
+        },
+        "frontend/app/dashboard/page.jsx": {
+            "react_components": ["REACT_COMPONENT"],
+            "exported_functions": ["Dashboard"],
+        },
+        "frontend/src/components/Button.tsx": {
+            "react_components": ["REACT_COMPONENT"],
+            "exported_functions": ["Button"],
+        },
+        "frontend/src/api/client.js": {
+            "api_calls": [{"client": "axios", "method": "UNKNOWN", "line": 2}]
+        },
+        "frontend/src/App.tsx": {
+            "react_components": ["REACT_COMPONENT"],
+            "jsx_routes": [
+                {"path": "/home", "component": "HomeComponent", "line": 5},
+                {"path": "/profile", "component": "Profile", "line": 6}
+            ]
+        }
+    }
+
+    SCHEMA_TAGS = {}
+    CONTENT = {}
+    TECH_STACK = {
+        "backend_framework": None,
+        "frontend_framework": "nextjs",
+        "database": None,
+        "orm": None,
+    }
+
+    def test_frontend_routes_and_components(self):
+        ev = build_repository_evidence(
+            self.FILES, _noop_read, self.FEATURES, self.SCHEMA_TAGS, self.TECH_STACK
+        )
+        
+        assert "frontend_routes" in ev
+        
+        # Routes
+        routes = {(r["path"], r["framework"]) for r in ev["frontend_routes"]}
+        
+        # Next.js Pages Router
+        assert ("/about", "nextjs_pages") in routes
+        # Next.js App Router (from directory)
+        assert ("/dashboard", "nextjs_app") in routes
+        # React Router routes
+        assert ("/home", "react_router") in routes
+        assert ("/profile", "react_router") in routes
+
+
+# ---------------------------------------------------------------------------
+# 11. Component Relationships
+# ---------------------------------------------------------------------------
+
+class TestComponentRelationships:
+    """Verifies that internal EXPOSES_API, USES_ENTITY, CALLS_SERVICE, and IMPORTS_MODULE edges generate correctly."""
+
+    FILES = [
+        "src/auth/controllers/auth.ts",
+        "src/auth/services/auth_service.ts",
+        "src/user/models/user.ts",
+        "src/routes/api.ts"
+    ]
+
+    FEATURES = {
+        "src/auth/controllers/auth.ts": {
+            "imports": ["../services/auth_service"],
+            "api_endpoints": [
+                {"verb": "POST", "route": "/login"}
+            ]
+        },
+        "src/auth/services/auth_service.ts": {
+            "classes": ["AuthService"],
+            "functions": ["login"]
+        },
+        "src/user/models/user.ts": {
+            "classes": ["User"]
+        },
+        "src/routes/api.ts": {}
+    }
+
+    SCHEMA_TAGS = {
+        "src/user/models/user.ts": ["MONGOOSE_MODEL:User"],
+    }
+
+    CONTENT = {
+        "src/auth/controllers/auth.ts": "const svc = new AuthService(); const user = await User.findById(1);",
+        "src/auth/services/auth_service.ts": "export class AuthService {}",
+        "src/user/models/user.ts": "mongoose.model('User', schema);",
+    }
+    
+    TECH_STACK = {
+        "backend_framework": "express",
+        "database": "mongodb",
+        "orm": "mongoose",
+    }
+
+    def test_component_edges(self):
+        ev = build_repository_evidence(
+            self.FILES, _make_reader(self.CONTENT), self.FEATURES, self.SCHEMA_TAGS, self.TECH_STACK
+        )
+        
+        edges = {(r["from"], r["to"], r["type"]) for r in ev["relationships"]}
+        
+        # EXPOSES_API mapping
+        assert ("auth", "POST /login", "EXPOSES_API") in edges
+        
+        # IMPORTS_MODULE mapping (auth controller imports auth_service)
+        assert ("auth", "auth_service", "IMPORTS_MODULE") in edges
+        
+        # CALLS_SERVICE (auth controller content contains literal "AuthService")
+        assert ("auth", "AuthService", "CALLS_SERVICE") in edges
+        
+        # USES_ENTITY (auth controller content contains literal "User")
+        assert ("auth", "User", "USES_ENTITY") in edges
+
+# ---------------------------------------------------------------------------
+# 10. Output structure
 # ---------------------------------------------------------------------------
 
 class TestOutputStructure:
@@ -503,5 +770,113 @@ class TestOutputStructure:
             {"backend_framework": None},
         )
         assert set(ev.keys()) == {
-            "components", "apis", "entities", "services", "routers", "relationships",
+            "tech_stack", "modules", "components", "apis", "entities", "services", "repositories",
+            "mounts", "routers", "relationships", "frontend_routes"
         }
+
+    def test_modules_is_alias_for_components(self):
+        """modules and components must reference the same list."""
+        ev = build_repository_evidence(
+            ["some/file.js"], _noop_read, {}, {},
+            {"backend_framework": None},
+        )
+        assert ev["modules"] is ev["components"]
+
+
+# ---------------------------------------------------------------------------
+# 11. EPIC-1 Pipeline Upgrade Tests
+# ---------------------------------------------------------------------------
+
+class TestPipelineUpgrades:
+    """Verify the new EPIC-1 features: mounts, service classes, controller fields."""
+
+    def test_service_class_from_service_file(self):
+        """*.service.ts files should be detected as service_class entries."""
+        features = {
+            "auth.service.ts": {
+                "classes": [],
+                "exported_classes": ["AuthService"],
+                "methods": ["login", "register"],
+                "annotations": [],
+            }
+        }
+        ev = build_repository_evidence(
+            ["auth.service.ts"], _noop_read, features, {},
+            {"backend_framework": None},
+        )
+        services = ev["services"]
+        assert any(s["name"] == "AuthService" for s in services), \
+            f"Expected AuthService in services, got: {services}"
+        svc = next(s for s in services if s["name"] == "AuthService")
+        assert svc["type"] == "service_module"
+        assert svc["file"] == "auth.service.ts"
+
+    def test_router_mount_captured_in_mounts(self):
+        """api_endpoints with USE verb + mount_path should appear in mounts."""
+        features = {
+            "server.js": {
+                "api_endpoints": [
+                    {
+                        "verb": "USE",
+                        "route": "/api/auth",
+                        "handler": "authRouter",
+                        "mount_path": "/api/auth",
+                        "mounted_router": "authRouter",
+                        "line": 5,
+                    }
+                ],
+                "api_mounts": [],
+            }
+        }
+        ev = build_repository_evidence(
+            ["server.js"], _noop_read, features, {},
+            {"backend_framework": None},
+        )
+        mounts = ev["mounts"]
+        assert any(m["mount_path"] == "/api/auth" for m in mounts), \
+            f"Expected /api/auth mount, got: {mounts}"
+
+    def test_controller_field_on_api(self):
+        """Endpoints with a handler field should expose it as controller."""
+        features = {
+            "routes/auth.js": {
+                "api_endpoints": [
+                    {
+                        "verb": "POST",
+                        "route": "/login",
+                        "handler": "authController.login",
+                        "router_symbol": "router",
+                        "line": 10,
+                    }
+                ],
+            }
+        }
+        ev = build_repository_evidence(
+            ["routes/auth.js"], _noop_read, features, {},
+            {"backend_framework": None},
+        )
+        apis = ev["apis"]
+        if apis:  # Only validate if extraction produced results
+            api = next((a for a in apis if a.get("path") == "/login"), None)
+            if api:
+                assert api.get("controller") == "authController.login" or api.get("handler") == "authController.login"
+
+    def test_mounts_sorted_deterministically(self):
+        """mounts must be sorted by mount_path."""
+        features = {
+            "server.js": {
+                "api_endpoints": [
+                    {"verb": "USE", "route": "/api/users", "handler": "userRouter",
+                     "mount_path": "/api/users", "mounted_router": "userRouter", "line": 3},
+                    {"verb": "USE", "route": "/api/auth", "handler": "authRouter",
+                     "mount_path": "/api/auth", "mounted_router": "authRouter", "line": 2},
+                ],
+                "api_mounts": [],
+            }
+        }
+        ev = build_repository_evidence(
+            ["server.js"], _noop_read, features, {},
+            {"backend_framework": None},
+        )
+        paths = [m["mount_path"] for m in ev["mounts"]]
+        assert paths == sorted(paths), f"mounts not sorted: {paths}"

@@ -842,15 +842,44 @@ def _build_graph(file_paths: list[str], read_file: Callable[[str], str | None]) 
 
     edges: list[RouterMountEdge] = []
     router_middleware: dict[RouterIdentity, list[str]] = {}
-    use_rx = re.compile(r"\b([A-Za-z_]\w*)\.use\(\s*([^)]+)\)")
+    # Balanced-paren finder: locate `symbol.use(` and extract args body
+    # respecting nested parens so `require(...)` doesn't break the match.
+    use_header_rx = re.compile(r"\b([A-Za-z_]\w*)\.use\s*\(")
+
+    def _extract_balanced_args(content: str, start: int) -> str | None:
+        """From the char after '(' at *start*, return the args string up to the matching ')'."""
+        depth = 1
+        i = start
+        while i < len(content) and depth > 0:
+            ch = content[i]
+            if ch in ("'", '"', '`'):
+                # Skip string literals
+                q = ch
+                i += 1
+                while i < len(content) and content[i] != q:
+                    if content[i] == '\\':
+                        i += 1  # skip escape
+                    i += 1
+            elif ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    return content[start:i]
+            i += 1
+        return None
+
     for file_path in sorted(file_paths):
         if not file_path.endswith((".js", ".ts", ".jsx", ".tsx")):
             continue
         content = read_file(file_path) or ""
         aliases = import_aliases_by_file.get(file_path, {})
-        for m in use_rx.finditer(content):
+        for m in use_header_rx.finditer(content):
+            args_body = _extract_balanced_args(content, m.end())
+            if args_body is None:
+                continue
             parent_symbol = m.group(1)
-            args = _split_args(m.group(2))
+            args = _split_args(args_body)
             if not args:
                 continue
             mount_path = args[0].strip()
@@ -868,6 +897,16 @@ def _build_graph(file_paths: list[str], read_file: Callable[[str], str | None]) 
             child_file = aliases.get(child_alias, file_path)
             child_symbols = router_symbols_by_file.get(child_file, []) or ["router"]
             is_child_router = child_alias in child_symbols or child_alias in aliases
+
+            # Inline require support for mounting
+            inline_req = re.search(r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", maybe_child)
+            if inline_req:
+                resolved = _resolve_import_path(file_path, inline_req.group(1), files)
+                if resolved:
+                    child_file = resolved
+                    child_symbols = router_symbols_by_file.get(child_file, []) or ["router"]
+                    is_child_router = True
+                    child_alias = child_symbols[0] if child_symbols else "router"
 
             if mount_is_static and is_child_router:
                 middleware_tokens = _extract_call_tokens(args[1:-1])

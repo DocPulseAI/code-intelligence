@@ -33,6 +33,11 @@ def _normalize_path(path: str) -> str:
 
 
 def _controller_from_source(source: dict) -> str:
+    # Prefer explicit controller key (set by EPIC-1 mount resolution)
+    ctrl = str((source or {}).get("controller", "")).strip()
+    if ctrl:
+        return ctrl
+    # Legacy fallback: derive from source file name
     file_name = str((source or {}).get("file", ""))
     return os.path.basename(file_name) if file_name else ""
 
@@ -46,7 +51,7 @@ def build_api_surface(endpoints: list[dict]) -> list[dict]:
         path = _normalize_path(str(ep.get("path", "/")))
 
         auth = ep.get("auth", {}) or {}
-        auth_required = bool(auth.get("required") is True)
+        auth_required = bool(ep.get("auth_required")) or bool(auth.get("required") is True)
 
         req = ep.get("request", {}) or {}
         request_payload = {

@@ -55,6 +55,12 @@ def build_architecture_model(file_paths: list[str], read_file: Callable[[str], s
         layers.append("models")
     if any("/repositories/" in p for p in lowered):
         layers.append("repositories")
+    if any("/prisma/" in p or p.endswith("/prisma") for p in lowered):
+        layers.append("prisma")
+    if any("/utils/" in p or p.endswith("/utils") for p in lowered):
+        layers.append("utils")
+    if any("/mappers/" in p or p.endswith("/mappers") for p in lowered):
+        layers.append("mappers")
 
     deps = set()
     for p in paths:

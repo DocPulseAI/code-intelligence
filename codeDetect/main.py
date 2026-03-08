@@ -62,6 +62,13 @@ def main():
         from src.intelligence.data_model_graph import build_data_model
         from src.intelligence.schema_diff_engine import extract_canonical_models, diff_schema_models
         from src.intelligence.repository_evidence import build_repository_evidence
+        from src.intelligence.architecture_reconstructor import reconstruct_architecture
+        from src.intelligence.dependency_graph_engine import build_dependency_graph
+        from src.intelligence.call_graph_engine import build_call_graph
+        from src.intelligence.impact_analysis_engine import build_impact_analysis
+        from src.intelligence.dependency_analysis_engine import analyze_dependencies
+        from src.intelligence.call_graph_analysis_engine import analyze_call_graph
+        from src.intelligence.repository_intelligence_engine import analyze_repository_intelligence
         from src.breaking_change_engine import compare_reports
         from src.risk_scoring import score_report_risk
         from src.baseline_store import BaselineStore
@@ -177,7 +184,12 @@ def main():
 
                 # Collect dependencies
                 for dep in features.get("dependencies", []):
-                    all_packages.add(dep)
+                    if dep.startswith((".", "..")):
+                        file_dir = os.path.dirname(path)
+                        norm_dep = os.path.normpath(os.path.join(file_dir, dep)).replace("\\", "/")
+                        all_packages.add(norm_dep)
+                    else:
+                        all_packages.add(dep)
 
                 # Collect database models
                 if schema_tags:
@@ -195,6 +207,11 @@ def main():
                     "features": features,
                     "schema_tags": schema_tags,
                 })
+
+            # Sort baseline root elements for determinism
+            all_endpoints = sorted(all_endpoints, key=lambda ep: (ep.get("method", ""), ep.get("path", "")))
+            database_models = sorted(database_models, key=lambda m: m.get("file", ""))
+            changes = sorted(changes, key=lambda c: c.get("file", ""))
 
             # Build advanced intelligence layers
             LOG.info("Building API surface...")
@@ -214,6 +231,83 @@ def main():
             repository_evidence = build_repository_evidence(
                 all_file_paths, read_file, file_features, file_schema_tags, tech_stack
             )
+
+            LOG.info("Reconstructing architecture...")
+            arch_recon = reconstruct_architecture(repository_evidence)
+            architecture_reconstruction = arch_recon.get("architecture_reconstruction", {})
+
+            LOG.info("Building dependency graph...")
+            dependency_graph = build_dependency_graph(repository_evidence, changes)
+            
+            LOG.info("Building call graph...")
+            call_graph = build_call_graph(repository_evidence)
+            
+            LOG.info("Analyzing call graph hierarchy...")
+            call_analysis_res = analyze_call_graph(call_graph, repository_evidence)
+            call_graph_analysis = call_analysis_res.get("call_graph_analysis", {})
+            
+            LOG.info("Analyzing dependencies...")
+            dep_analysis_res = analyze_dependencies(dependency_graph)
+            dependency_analysis = dep_analysis_res.get("dependency_analysis", {})
+            impact_analysis = build_impact_analysis(
+                repository_evidence, dependency_graph, call_graph, changes
+            )
+            
+            LOG.info("Generating deep repository intelligence reasoning...")
+            repo_intel = analyze_repository_intelligence(
+                ev_apis_dict if 'ev_apis_dict' in locals() else {"endpoints": repository_evidence.get('apis', [])},
+                dependency_graph,
+                call_graph,
+                architecture_reconstruction,
+                changes,
+                database_models,
+                dependency_analysis
+            )
+
+            # ---------------------------------------------------------------
+
+            # Override api_surface and api_contract with resolved endpoints
+            # from repository_evidence.apis (which carry full resolved paths
+            # and controller mappings from the mount resolution engine).
+            # ---------------------------------------------------------------
+            ev_apis = repository_evidence.get("apis", [])
+            if ev_apis:
+                LOG.info(f"Overriding api_surface with {len(ev_apis)} resolved endpoints from repository_evidence")
+                # Build enriched endpoint list for api_surface
+                resolved_endpoints_for_surface = []
+                health_endpoints = []
+                for a in ev_apis:
+                    if a.get("method") and a.get("path"):
+                        path_str = str(a.get("path", ""))
+                        handler_str = str(a.get("handler", "")).lower()
+                        ctrl_str = str(a.get("controller", "")).lower()
+                        
+                        # FIX 1: Remove Health / Root Routes
+                        is_health = (path_str == "/") or any(k in handler_str for k in ("status", "health", "api is running")) or any(k in ctrl_str for k in ("status", "health", "api is running"))
+                        if is_health:
+                            health_endpoints.append(a)
+                            continue
+
+                        ep = {
+                            "method": a.get("method", "GET"),
+                            "path": a.get("path", ""),
+                            "source": {"controller": a.get("controller", "")},
+                            "controller": a.get("controller", ""),
+                            "component": a.get("module", ""),
+                            "source_file": a.get("source_file", ""),
+                            "router_file": a.get("router_file", ""),
+                            "line": a.get("line", 0),
+                        }
+                        if "auth_required" in a:
+                            ep["auth_required"] = a["auth_required"]
+                        resolved_endpoints_for_surface.append(ep)
+                api_surface = build_api_surface(resolved_endpoints_for_surface)
+                # Also replace all_endpoints so api_contract gets resolved paths
+                all_endpoints = sorted(
+                    resolved_endpoints_for_surface,
+                    key=lambda ep: (ep.get("method", ""), ep.get("path", ""))
+                )
+            # ---------------------------------------------------------------
 
             # Classify repository
             LOG.info("Classifying repository type...")
@@ -237,7 +331,14 @@ def main():
                     "models": schema_models,
                     "models_detected": len(schema_models),
                 },
+                "architecture_reconstruction": architecture_reconstruction,
+                "dependency_graph": dependency_graph,
+                "dependency_analysis": dependency_analysis,
+                "call_graph": call_graph,
+                "call_graph_analysis": call_graph_analysis,
+                "impact_analysis": impact_analysis,
             }
+
 
             # Load baseline and detect breaking changes
             baseline_store = BaselineStore()
@@ -279,6 +380,14 @@ def main():
 
             # Calculate risk score
             risk_analysis = score_report_risk(current_normalized_report, breaking_changes)
+
+            internal_modules_list = []
+            external_dependencies_list = []
+            for pkg in sorted(all_packages):
+                if pkg.startswith(("./", "../", "src/", "app/")):
+                    internal_modules_list.append(pkg)
+                else:
+                    external_dependencies_list.append(pkg)
 
             # Build complete impact report matching schema
             impact_report = {
@@ -375,12 +484,23 @@ def main():
                     "summary": f"Analyzed {len(changes)} files: {len(all_endpoints)} endpoints, {len(breaking_changes)} breaking changes, stack={tech_stack.get('backend_framework') or 'unknown'}",
                     "doc_contract": documentation_contract,
                     "dependency_classification": {
-                        "external_dependencies": sorted(all_packages)[:50],
-                        "internal_modules": [],
+                        "external_dependencies": external_dependencies_list[:50],
+                        "internal_modules": internal_modules_list[:50],
                         "static_assets": [],
                         "dev_dependencies": [],
                     },
                     "repository_evidence": repository_evidence,
+                    "architecture_reconstruction": architecture_reconstruction,
+                    "architecture_insights": repo_intel.get("architecture_insights", {}),
+                    "corrected_call_graph": repo_intel.get("corrected_call_graph", {}),
+                    "dead_function_analysis": repo_intel.get("dead_function_analysis", {}),
+                    "impact_propagation": repo_intel.get("impact_propagation", {}),
+
+                    "dependency_graph": dependency_graph,
+                    "dependency_analysis": dependency_analysis,
+                    "call_graph": call_graph,
+                    "call_graph_analysis": call_graph_analysis,
+                    "impact_analysis": impact_analysis,
                 },
             }
 
@@ -390,6 +510,121 @@ def main():
                 "report": current_normalized_report,
             })
             LOG.info(f"Baseline saved for {project_id}/{branch}/{commit_sha}")
+
+            # Validate Report Data Integrity
+            def validate_impact_report(report: dict) -> None:
+                """Strict structural validation of the impact report. Aborts on failure."""
+                r = report.get("report", {})
+                ev = r.get("repository_evidence", {})
+                
+                # 1. No undefined components (modules)
+                components = {c["name"] for c in ev.get("modules", []) if "name" in c}
+                
+                # 2. Duplicate Endpoints Validation + APIs belong to components
+                seen_endpoints = set()
+                for api in ev.get("apis", []):
+                    method = api.get("method", "").upper()
+                    path = api.get("path", "")
+                    key = f"{method} {path}"
+                    
+                    if key in seen_endpoints:
+                        LOG.error(f"Validation Error: Duplicate endpoint found - {key}")
+                        sys.exit(2)
+                    seen_endpoints.add(key)
+                    
+                    if not api.get("controller"):
+                        LOG.error(f"Validation Error: API endpoint {key} missing controller reference")
+                        sys.exit(2)
+                        
+                    comp = api.get("module")
+                    if not comp or comp not in components:
+                        LOG.error(f"Validation Error: API endpoint {key} references unknown or empty module '{comp}'")
+                        sys.exit(2)
+                        
+                for api in r.get("api_surface", []):
+                    method = api.get("method", "").upper()
+                    path = api.get("path", "")
+                    key = f"{method} {path}"
+                    if key not in seen_endpoints:
+                         pass # It's possible for things to be in surface but not apis directly depending on extraction, but if checked we ensure consistency against knowns.
+
+                # PHASE 2 MANDATORY VALIDATIONS
+                # Validation 1: Auth sync mapping
+                # Both arrays must match auth status precisely by endpoint.
+                api_surface_auth = {f"{a.get('method', '').upper()} {a.get('path', '')}": bool(a.get("auth_required")) for a in r.get("api_surface", [])}
+                for ep in r.get("api_contract", {}).get("endpoints", []):
+                    key = f"{ep.get('method', '').upper()} {ep.get('path', '')}"
+                    if key in api_surface_auth:
+                        if bool(ep.get("auth_required")) != api_surface_auth[key]:
+                            LOG.error(f"Validation Error: Auth desync on {key}")
+                            sys.exit(2)
+                
+                # Validation 2: Component field presence & API structure
+                for ep in r.get("api_contract", {}).get("endpoints", []):
+                    method = ep.get('method')
+                    path = ep.get('path')
+                    key = f"{str(method).upper()} {path}"
+                    
+                    if not method:
+                        LOG.error("Validation Error: API endpoint missing method")
+                        sys.exit(2)
+                    if not path or "//" in path:
+                        LOG.error("Validation Error: API endpoint missing path or unsanitized")
+                        sys.exit(2)
+                    if not ep.get("controller") and not ep.get("source", {}).get("controller"):
+                        LOG.error(f"Validation Error: API endpoint missing controller for {key}")
+                        sys.exit(2)
+                    if not ep.get("component"):
+                        LOG.error(f"Validation Error: Component field is empty for {key}")
+                        sys.exit(2)
+                
+                # Validation 3: Dependency classification accuracy
+                deps_class = r.get("dependency_classification", {})
+                for pkg in deps_class.get("internal_modules", []):
+                    if not pkg.startswith(("./", "../", "src/", "app/")):
+                        LOG.error(f"Validation Error: internal_module {pkg} is not a valid relative/internal path.")
+                        sys.exit(2)
+                for pkg in deps_class.get("external_dependencies", []):
+                    if pkg.startswith(("./", "../", "src/", "app/")):
+                        LOG.error(f"Validation Error: external_dependency {pkg} looks internal.")
+                        sys.exit(2)
+
+                # 3. All entities have source files
+                for entity in ev.get("entities", []):
+                    name = entity.get("name")
+                    src = entity.get("source_file")
+                    if not src:
+                        LOG.error(f"Validation Error: Entity '{name}' is missing a source_file")
+                        sys.exit(2)
+
+                # 4. Valid relationships
+                valid_nodes = components.union(seen_endpoints)
+                for ent in ev.get("entities", []):
+                    if "name" in ent:
+                        valid_nodes.add(ent["name"])
+                for router in ev.get("routers", []):
+                    if "name" in router:
+                        valid_nodes.add(router["name"])
+                for svc in ev.get("services", []):
+                    if "name" in svc:
+                        valid_nodes.add(svc["name"])
+                        
+                for rel in ev.get("relationships", []):
+                    # For EXPOSES_API, 'to' is 'METHOD /path'
+                    rel_type = rel.get("type", "")
+                    frm = rel.get("from")
+                    to = rel.get("to")
+                    
+                    if rel_type in ("EXPOSES_API", "IMPORTS_MODULE", "CALLS_SERVICE", "USES_ENTITY"):
+                        if frm not in valid_nodes:
+                            LOG.error(f"Validation Error: Relationship '{rel_type}' has invalid 'from' node: {frm}")
+                            sys.exit(2)
+                        if to not in valid_nodes:
+                            LOG.error(f"Validation Error: Relationship '{rel_type}' has invalid 'to' node: {to}")
+                            sys.exit(2)
+
+            LOG.info("Validating impact report integrity...")
+            validate_impact_report(impact_report)
 
             # Write to impact_report.json
             output_path = os.path.join(os.path.dirname(__file__), "impact_report.json")

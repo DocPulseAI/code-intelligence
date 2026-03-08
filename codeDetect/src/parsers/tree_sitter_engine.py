@@ -186,7 +186,7 @@ class TreeSitterEngine:
 
     def _extract_java_features(self, root: 'Node', code: str) -> Dict[str, Any]:
         """Extract Java classes, methods, and Spring annotations."""
-        features = {
+        features: Dict[str, Any] = {
             "classes": [],
             "methods": [],
             "constructors": [],
@@ -195,7 +195,8 @@ class TreeSitterEngine:
             "schema_annotations": [],
             "imports": [],
             "comments": [],
-            "complexity_nodes": 0
+            "complexity_nodes": 0,
+            "calls": []
         }
 
         self._traverse_java(root, code, features)
@@ -205,10 +206,10 @@ class TreeSitterEngine:
         """Recursively traverse Java AST.
         
         Args:
-            context: Carries down class-level state (e.g. base path, class name)
+            context: Carries down class-level state (e.g. base path, class name, current function)
         """
         if context is None:
-            context = {"class_name": "", "base_path": ""}
+            context = {"class_name": "", "base_path": "", "current_function": ""}
             
         # Class declarations
         if node.type == 'class_declaration':
@@ -243,13 +244,20 @@ class TreeSitterEngine:
         elif node.type == 'method_declaration':
             name_node = node.child_by_field_name('name')
             if name_node:
-                features["methods"].append(self._get_node_text(name_node, code))
+                method_name = self._get_node_text(name_node, code)
+                features["methods"].append(method_name)
+                # Update context for body traversal
+                context = context.copy()
+                context["current_function"] = method_name
 
         # Constructor declarations
         elif node.type == 'constructor_declaration':
             name_node = node.child_by_field_name('name')
             if name_node:
-                features["constructors"].append(self._get_node_text(name_node, code))
+                name = self._get_node_text(name_node, code)
+                features["constructors"].append(name)
+                context = context.copy()
+                context["current_function"] = name
 
         # Annotations (Spring)
         elif node.type in ['marker_annotation', 'annotation']:
@@ -300,6 +308,23 @@ class TreeSitterEngine:
         elif node.type == 'import_declaration':
             features["imports"].append(self._get_node_text(node, code).strip())
 
+        # Call expressions
+        elif node.type == 'method_invocation':
+            if context.get("current_function"):
+                name_node = node.child_by_field_name('name')
+                obj_node = node.child_by_field_name('object')
+                callee = ""
+                if obj_node:
+                    callee = f"{self._get_node_text(obj_node, code)}.{self._get_node_text(name_node, code)}"
+                else:
+                    callee = self._get_node_text(name_node, code)
+                
+                features["calls"].append({
+                    "caller": context["current_function"],
+                    "callee": callee,
+                    "line": node.start_point[0] + 1
+                })
+
         # Comments
         elif node.type in ['line_comment', 'block_comment']:
             features["comments"].append(self._get_node_text(node, code).strip())
@@ -329,12 +354,18 @@ class TreeSitterEngine:
 
     def _extract_js_features(self, root: 'Node', code: str) -> Dict[str, Any]:
         """Extract JS/TS features in backward-compatible schema."""
-        features = {
+        features: Dict[str, Any] = {
             "functions": [],
             "classes": [],
             "exported_functions": [],
             "exported_classes": [],
-            "api_endpoints": []
+            "api_endpoints": [],
+            "api_mounts": [],
+            "mongoose_schemas": [],
+            "api_calls": [],
+            "react_components": [],
+            "jsx_routes": [],
+            "calls": [],
         }
         route_targets = self._extract_js_route_targets(code)
         self._traverse_js(root, code, features, route_targets)
@@ -383,12 +414,15 @@ class TreeSitterEngine:
             context: Carries down class-level state (e.g., base path, class name for NestJS)
         """
         if context is None:
-            context = {"class_name": "", "base_path": ""}
+            context = {"class_name": "", "base_path": "", "current_function": ""}
 
         if node.type == 'function_declaration':
             name_node = node.child_by_field_name('name')
             if name_node:
-                features["functions"].append(self._get_node_text(name_node, code))
+                func_name = self._get_node_text(name_node, code)
+                features["functions"].append(func_name)
+                context = context.copy()
+                context["current_function"] = func_name
 
         elif node.type == 'lexical_declaration':
             for child in node.children:
@@ -399,6 +433,8 @@ class TreeSitterEngine:
                     func_name = self._extract_js_variable_name(child, code)
                     if func_name:
                         features["functions"].append(func_name)
+                        context = context.copy()
+                        context["current_function"] = func_name
 
         elif node.type == 'class_declaration':
             name_node = node.child_by_field_name('name')
@@ -434,6 +470,9 @@ class TreeSitterEngine:
             method_name = ""
             if name_node:
                 method_name = self._get_node_text(name_node, code)
+                features["functions"].append(method_name) # simplified
+                context = context.copy()
+                context["current_function"] = method_name
                 
             # Check for NestJS @Get, @Post, etc. decorators
             prev_node = node.prev_sibling
@@ -477,7 +516,83 @@ class TreeSitterEngine:
             endpoint = self._extract_express_route(node, code, route_targets)
             if endpoint:
                 features["api_endpoints"].append(endpoint)
+            
+            # Record general calls
+            if context.get("current_function"):
+                func_node = node.child_by_field_name('function')
+                if func_node:
+                    callee = self._get_node_text(func_node, code)
+                    # Ignore very short or noise calls if desired, but here we include all
+                    features["calls"].append({
+                        "caller": context["current_function"],
+                        "callee": callee,
+                        "line": node.start_point[0] + 1
+                    })
+            
+            # Detect API calls (fetch or axios)
+            func_node = node.child_by_field_name('function')
+            if func_node:
+                func_name = self._get_node_text(func_node, code)
+                is_fetch = func_name == 'fetch'
+                is_axios = func_name.startswith('axios')
+                if is_fetch or is_axios:
+                    features["api_calls"].append({
+                        "client": "fetch" if is_fetch else "axios",
+                        "method": "UNKNOWN",  # Will need deeper inspect if desired, string matching for now
+                        "line": node.start_point[0] + 1
+                    })
 
+        elif node.type == 'jsx_element' or node.type == 'jsx_self_closing_element':
+            # Basic React Component Route detection
+            open_tag = node.child(0) if node.type == 'jsx_element' else node
+            if open_tag:
+                tag_name_node = open_tag.child(1) # '<', 'tag_name'
+                if tag_name_node:
+                    tag_name = self._get_node_text(tag_name_node, code)
+                    # React Router <Route>
+                    if tag_name in ('Route', 'RouterProvider'):
+                        path = ""
+                        element = ""
+                        for child in open_tag.children:
+                            if child.type == 'jsx_attribute':
+                                attr_name_node = child.child_by_field_name('name')
+                                if attr_name_node:
+                                    attr_name = self._get_node_text(attr_name_node, code)
+                                    attr_val = child.child(2) if child.child_count > 2 else None
+                                    if attr_val:
+                                        val_text = self._get_node_text(attr_val, code).strip('"\'`{}')
+                                        if attr_name == 'path':
+                                            path = val_text
+                                        elif attr_name in ('element', 'component'):
+                                            # Strip out generic component wrappers like <MyComponent /> -> MyComponent
+                                            comp_match = re.search(r'<([A-Z][a-zA-Z0-9_]*)', self._get_node_text(attr_val, code))
+                                            if comp_match:
+                                                element = comp_match.group(1)
+                                            else:
+                                                element = val_text
+                        if path or element:
+                            features["jsx_routes"].append({
+                                "path": path,
+                                "component": element,
+                                "line": node.start_point[0] + 1
+                            })
+            
+            # Fallback regex for extremely nested or custom AST parsed Route components
+            if node.type == 'jsx_element':
+                raw_jsx = self._get_node_text(node, code)
+                if '<Route ' in raw_jsx:
+                    # Regex to grab path="..." and element={...} or component={...}
+                    # Also supports index={true} since path might not be exactly next to Route
+                    for r_match in re.finditer(r'<Route\b[^>]*?path=[\'"]([^\'"]+)[\'"][^>]*(?:element|component)=\{?\s*<?([A-Z][a-zA-Z0-9_]*)', raw_jsx):
+                        features["jsx_routes"].append({
+                            "path": r_match.group(1),
+                            "component": r_match.group(2),
+                            "line": node.start_point[0] + 1
+                        })
+
+            # Check if this tree is returning JSX (making the parent a React component)
+            features["react_components"].append("REACT_COMPONENT")
+            
         for child in node.children:
             self._traverse_js(child, code, features, route_targets, context)
 
@@ -503,7 +618,7 @@ class TreeSitterEngine:
                             features["exported_functions"].append(func_name)
 
     def _extract_express_route(self, call_node: 'Node', code: str, route_targets: set[str]) -> Optional[Dict[str, Any]]:
-        """Extract Express-style app/router endpoint calls."""
+        """Extract Express-style app/router endpoint calls and mount declarations."""
         func_node = call_node.child_by_field_name('function')
         args_node = call_node.child_by_field_name('arguments')
         if not func_node or not args_node or func_node.type != 'member_expression':
@@ -516,6 +631,11 @@ class TreeSitterEngine:
 
         target = self._get_node_text(object_node, code)
         verb = self._get_node_text(property_node, code).lower()
+
+        # Capture router mounts: app.use('/prefix', routerVar)
+        if target in route_targets and verb == 'use':
+            return self._extract_express_mount(call_node, args_node, code, target)
+
         if target not in route_targets or verb not in {'get', 'post', 'put', 'delete', 'patch'}:
             return None
 
@@ -525,15 +645,16 @@ class TreeSitterEngine:
                 route = self._get_node_text(arg, code).strip('"\'')
                 break
 
-        # Extract handler: last non-string, non-punctuation argument
-        handler = ""
+        # Collect all meaningful (non-string, non-punctuation) args
         skip_types = {'string', 'string_fragment', ',', '(', ')'}
-        last_meaningful_arg = None
+        meaningful_args = []
         for arg in args_node.children:
             if arg.type not in skip_types and self._get_node_text(arg, code).strip():
-                last_meaningful_arg = arg
-        if last_meaningful_arg:
-            handler = self._get_node_text(last_meaningful_arg, code).strip()
+                meaningful_args.append(self._get_node_text(arg, code).strip())
+
+        # Last meaningful arg is the handler; everything before it is middleware
+        handler = meaningful_args[-1] if meaningful_args else ""
+        middleware = meaningful_args[:-1] if len(meaningful_args) > 1 else []
 
         return {
             "verb": verb.upper(),
@@ -541,7 +662,92 @@ class TreeSitterEngine:
             "line": call_node.start_point[0] + 1,
             "handler": handler,
             "router_symbol": target,
+            "middleware": middleware,
         }
+
+    def _extract_express_mount(self, call_node: 'Node', args_node: 'Node', code: str, target: str) -> Optional[Dict[str, Any]]:
+        """Extract app.use('/prefix', routerVar) as a mount record (returned as a USE verb endpoint)."""
+        mount_path = ""
+        router_var = ""
+        arg_children = [a for a in args_node.children if a.type not in {',', '(', ')'}]
+        for i, arg in enumerate(arg_children):
+            if i == 0 and arg.type in {'string', 'string_fragment'}:
+                mount_path = self._get_node_text(arg, code).strip('"\'')
+            elif i == 1:
+                router_var = self._get_node_text(arg, code).strip()
+        if not mount_path and not router_var:
+            return None
+        # Return as a USE endpoint so existing mount resolution pipeline handles it.
+        return {
+            "verb": "USE",
+            "route": mount_path,
+            "handler": router_var,
+            "router_symbol": target,
+            "line": call_node.start_point[0] + 1,
+            # Extra field for explicit mount surfacing
+            "mount_path": mount_path,
+            "mounted_router": router_var,
+        }
+
+    def _extract_mongoose_schema(self, new_node: 'Node', code: str, features: Dict):
+        """Extract Mongoose Schema relationships via AST."""
+        # Find constructor name
+        constructor_node = new_node.child_by_field_name('constructor')
+        is_schema = False
+        if constructor_node:
+            text = self._get_node_text(constructor_node, code)
+            if text in ('mongoose.Schema', 'Schema'):
+                is_schema = True
+        
+        if not is_schema:
+            return
+
+        args_node = new_node.child_by_field_name('arguments')
+        if not args_node:
+            return
+
+        schema_fields = {}
+        for arg in args_node.children:
+            if arg.type == 'object':
+                # Traverse the top-level schema definition fields
+                for pair in arg.children:
+                    if pair.type == 'pair':
+                        key_node = pair.child_by_field_name('key')
+                        val_node = pair.child_by_field_name('value')
+                        if not key_node or not val_node:
+                            continue
+                            
+                        field_name = self._get_node_text(key_node, code).strip('\'"')
+                        
+                        # The value could be an object like { type: ..., ref: 'Model' }
+                        if val_node.type == 'object':
+                            for prop in val_node.children:
+                                if prop.type == 'pair':
+                                    p_key = prop.child_by_field_name('key')
+                                    p_val = prop.child_by_field_name('value')
+                                    if p_key and p_val and self._get_node_text(p_key, code) == 'ref':
+                                        ref_model = self._get_node_text(p_val, code).strip('\'"')
+                                        schema_fields[field_name] = ref_model
+                                        break
+                                        
+                        # Schema could also be an array of references: [{ type: ..., ref: 'Model' }]
+                        elif val_node.type == 'array':
+                            for item in val_node.children:
+                                if item.type == 'object':
+                                    for prop in item.children:
+                                        if prop.type == 'pair':
+                                            p_key = prop.child_by_field_name('key')
+                                            p_val = prop.child_by_field_name('value')
+                                            if p_key and p_val and self._get_node_text(p_key, code) == 'ref':
+                                                ref_model = self._get_node_text(p_val, code).strip('\'"')
+                                                schema_fields[field_name] = ref_model
+                                                break
+                break # Only process the first argument (the main schema block)
+                
+        # To determine the model name, look at what this new Schema is assigned to, e.g. mongoose.model('User', schema)
+        # We'll just pass out the schema fields and let repository_evidence match it up to the file's model 
+        if schema_fields:
+            features["mongoose_schemas"].append(schema_fields)
 
     def _extract_js_variable_name(self, declarator_node: 'Node', code: str) -> str:
         """Extract variable name robustly from JS variable_declarator."""
@@ -578,22 +784,26 @@ class TreeSitterEngine:
 
     def _extract_python_features(self, root: 'Node', code: str) -> Dict[str, Any]:
         """Extract Python functions, classes, and decorators."""
-        features = {
+        features: Dict[str, Any] = {
             "functions": [],
             "classes": [],
             "decorators": [],
             "imports": [],
             "api_routes": [],
+            "api_endpoints": [],
             "docstrings": [],
             "comments": [],
-            "complexity_nodes": 0
+            "complexity_nodes": 0,
+            "calls": []
         }
 
         self._traverse_python(root, code, features)
         return features
 
-    def _traverse_python(self, node: 'Node', code: str, features: Dict):
+    def _traverse_python(self, node: 'Node', code: str, features: Dict, context: Dict = None):
         """Recursively traverse Python AST."""
+        if context is None:
+            context = {"current_function": ""}
 
         # Handle router prefix mounts: app.include_router(..., prefix=...) or app.register_blueprint(..., url_prefix=...)
         if node.type == 'call':
@@ -657,6 +867,8 @@ class TreeSitterEngine:
             if name_node:
                 func_name = self._get_node_text(name_node, code)
                 features["functions"].append(func_name)
+                context = context.copy()
+                context["current_function"] = func_name
 
             # Check if this function has decorators that define routes
             has_route = False
@@ -730,9 +942,21 @@ class TreeSitterEngine:
                           'list_comprehension', 'dictionary_comprehension']:
             features["complexity_nodes"] += 1
 
+        # Call expressions
+        elif node.type == 'call':
+            if context.get("current_function"):
+                func_node = node.child_by_field_name('function')
+                if func_node:
+                    callee = self._get_node_text(func_node, code)
+                    features["calls"].append({
+                        "caller": context["current_function"],
+                        "callee": callee,
+                        "line": node.start_point[0] + 1
+                    })
+
         # Recurse
         for child in node.children:
-            self._traverse_python(child, code, features)
+            self._traverse_python(child, code, features, context)
 
     def _extract_decorator_method(self, decorator: str) -> str:
         """Extract HTTP method from decorator (e.g. methods=['POST'] or @router.post)."""

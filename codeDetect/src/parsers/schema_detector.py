@@ -21,6 +21,13 @@ class SchemaDetector:
     SQL_ALTER_TABLE = re.compile(r"\bALTER\s+TABLE\s+(?:ONLY\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?", re.IGNORECASE)
     SQL_DROP_TABLE = re.compile(r"\bDROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?", re.IGNORECASE)
 
+    # SQL Foreign Keys
+    # ALTER TABLE foo ADD CONSTRAINT bar FOREIGN KEY (x) REFERENCES target_table(id)
+    PG_ALTER_ADD_FKEY = re.compile(r"\bALTER\s+TABLE\s+(?:ONLY\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?.*?FOREIGN\s+KEY\s*\([^)]+\)\s*REFERENCES\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?", re.IGNORECASE | re.DOTALL)
+    # CREATE TABLE foo ( ... FOREIGN KEY (x) REFERENCES target_table(id) ... )
+    PG_CREATE_TABLE_BODY_FKEY = re.compile(r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?\s*\((.*?)\)", re.IGNORECASE | re.DOTALL)
+    PG_INLINE_FKEY = re.compile(r"REFERENCES\s+(?:[A-Za-z_][A-Za-z0-9_]*\.)?\"?([A-Za-z_][A-Za-z0-9_]*)\"?", re.IGNORECASE)
+
     # PostgreSQL-specific DDL
     PG_CREATE_TYPE = re.compile(r"\bCREATE\s+TYPE\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?\s+AS\s+ENUM\b", re.IGNORECASE)
     PG_ALTER_TYPE = re.compile(r"\bALTER\s+TYPE\s+\"?([A-Za-z_][A-Za-z0-9_]*)\"?\s+ADD\s+VALUE\b", re.IGNORECASE)
@@ -75,6 +82,19 @@ class SchemaDetector:
             for match in SchemaDetector.SQL_DROP_TABLE.finditer(content):
                 sql_tags.add("SQL_TABLE_CHANGE")
                 sql_tags.add(f"SQL_DROP_TABLE:{match.group(1)}")
+
+            # SQL Foreign Key mappings
+            for match in SchemaDetector.PG_ALTER_ADD_FKEY.finditer(content):
+                src_table = match.group(1)
+                target_table = match.group(2)
+                sql_tags.add(f"SQL_FOREIGN_KEY:{src_table}:{target_table}")
+                
+            for match in SchemaDetector.PG_CREATE_TABLE_BODY_FKEY.finditer(content):
+                src_table = match.group(1)
+                body = match.group(2)
+                for fkey_match in SchemaDetector.PG_INLINE_FKEY.finditer(body):
+                    target_table = fkey_match.group(1)
+                    sql_tags.add(f"SQL_FOREIGN_KEY:{src_table}:{target_table}")
 
             # PostgreSQL-specific tags.
             pg_hit = False
@@ -134,11 +154,16 @@ class SchemaDetector:
         elif ext in ['js', 'ts', 'jsx', 'tsx']:
             if SchemaDetector.MONGOOSE_SCHEMA.search(content):
                 tags.append("MONGOOSE_SCHEMA")
-            if SchemaDetector.MONGOOSE_MODEL.search(content):
-                # Extract model name
-                match = SchemaDetector.MONGOOSE_MODEL.search(content)
-                if match:
-                    tags.append(f"MONGOOSE_MODEL:{match.group(1)}")
+            # Use findall to collect ALL mongoose.model('Name') calls; take the
+            # LAST one which is always the canonical module.exports registration.
+            # Using only .search() (first match) breaks files like Task.model.js
+            # where the first call is an internal ref: mongoose.model('Project')
+            # inside a pre-save hook, causing the wrong model name to be tagged.
+            all_model_names = SchemaDetector.MONGOOSE_MODEL.findall(content)
+            if all_model_names:
+                # Last call = the real schema export (e.g. mongoose.model('Task', taskSchema))
+                canonical_name = all_model_names[-1]
+                tags.append(f"MONGOOSE_MODEL:{canonical_name}")
 
         # Django ORM (Python)
         elif ext == 'py' and SchemaDetector.DJANGO_MODEL.search(content):
