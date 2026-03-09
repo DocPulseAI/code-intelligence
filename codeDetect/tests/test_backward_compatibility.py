@@ -51,3 +51,7 @@ module.exports = app;
     assert eps
     assert legacy_required.issubset(set(eps[0].keys()))
     assert "endpoint_hash" in eps[0]
+
+    search_index = report["report"].get("search_index")
+    assert isinstance(search_index, dict)
+    assert set(search_index.keys()) == {"symbols", "references", "apis", "modules"}

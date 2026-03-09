@@ -69,6 +69,7 @@ def main():
         from src.intelligence.dependency_analysis_engine import analyze_dependencies
         from src.intelligence.call_graph_analysis_engine import analyze_call_graph
         from src.intelligence.repository_intelligence_engine import analyze_repository_intelligence
+        from src.intelligence.search_index_builder import build_search_index
         from src.breaking_change_engine import compare_reports
         from src.risk_scoring import score_report_risk
         from src.baseline_store import BaselineStore
@@ -252,6 +253,19 @@ def main():
             impact_analysis = build_impact_analysis(
                 repository_evidence, dependency_graph, call_graph, changes
             )
+
+            LOG.info("Building search index...")
+            search_index_res = build_search_index(
+                repository_evidence,
+                architecture_reconstruction,
+                dependency_graph,
+                call_graph,
+                read_file,
+            )
+            search_index = search_index_res.get(
+                "search_index",
+                {"symbols": [], "references": [], "apis": [], "modules": []},
+            )
             
             LOG.info("Generating deep repository intelligence reasoning...")
             repo_intel = analyze_repository_intelligence(
@@ -337,6 +351,7 @@ def main():
                 "call_graph": call_graph,
                 "call_graph_analysis": call_graph_analysis,
                 "impact_analysis": impact_analysis,
+                "search_index": search_index,
             }
 
 
@@ -501,6 +516,7 @@ def main():
                     "call_graph": call_graph,
                     "call_graph_analysis": call_graph_analysis,
                     "impact_analysis": impact_analysis,
+                    "search_index": search_index,
                 },
             }
 
@@ -666,6 +682,7 @@ def main():
                 "api_surface": [],
                 "data_model": {"entities": [], "relationships": []},
                 "doc_contract": {},
+                "search_index": {"symbols": [], "references": [], "apis": [], "modules": []},
             },
         }
         output_path = os.path.join(os.path.dirname(__file__), "impact_report.json")

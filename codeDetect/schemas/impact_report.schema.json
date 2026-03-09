@@ -156,7 +156,17 @@
             "relationships": {"type": "array"}
           }
         },
-        "doc_contract": {"type": "object"}
+        "doc_contract": {"type": "object"},
+        "search_index": {
+          "type": "object",
+          "required": ["symbols", "references", "apis", "modules"],
+          "properties": {
+            "symbols": {"type": "array", "items": {"type": "object"}},
+            "references": {"type": "array", "items": {"type": "object"}},
+            "apis": {"type": "array", "items": {"type": "object"}},
+            "modules": {"type": "array", "items": {"type": "object"}}
+          }
+        }
       }
     }
   }
