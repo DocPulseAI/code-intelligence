@@ -166,6 +166,39 @@
             "apis": {"type": "array", "items": {"type": "object"}},
             "modules": {"type": "array", "items": {"type": "object"}}
           }
+        },
+        "code_intelligence": {
+          "type": "object",
+          "required": ["symbol_index", "call_graph", "dependency_graph", "repository_graph"],
+          "properties": {
+            "symbol_index": {"type": "array", "items": {"type": "object"}},
+            "call_graph": {
+              "type": "object",
+              "required": ["nodes", "edges"],
+              "properties": {
+                "nodes": {"type": "array", "items": {"type": "string"}},
+                "edges": {"type": "array", "items": {"type": "object"}}
+              }
+            },
+            "dependency_graph": {
+              "type": "object",
+              "required": ["modules", "dependencies", "cycle_detected", "circular_dependencies"],
+              "properties": {
+                "modules": {"type": "array", "items": {"type": "string"}},
+                "dependencies": {"type": "array", "items": {"type": "object"}},
+                "cycle_detected": {"type": "boolean"},
+                "circular_dependencies": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}
+              }
+            },
+            "repository_graph": {
+              "type": "object",
+              "required": ["nodes", "edges"],
+              "properties": {
+                "nodes": {"type": "array", "items": {"type": "object"}},
+                "edges": {"type": "array", "items": {"type": "object"}}
+              }
+            }
+          }
         }
       }
     }

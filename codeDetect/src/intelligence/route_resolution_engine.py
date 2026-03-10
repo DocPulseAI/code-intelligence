@@ -45,7 +45,9 @@ class ResolvedRoute:
     line_start: int
 
 
-_APP_SYMBOLS = {"app", "server", "api"}
+# Treat only application instance symbols as root mount owners.
+# "api" is commonly used as a Router variable and must not be collapsed to root.
+_APP_SYMBOLS = {"app", "server"}
 _VERSION_SEGMENT = re.compile(r"^v\d+$")
 _OP_ID_RE = re.compile(r"^[a-z][A-Za-z0-9]*(?:_[0-9]+)?$")
 _PATH_LITERAL_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
@@ -514,20 +516,7 @@ def _is_valid_path(path: str) -> bool:
 
 def _is_business_route(path: str) -> bool:
     p = _normalize_path(path).lower()
-    if p == "/":
-        return False
-    ignore_prefixes = (
-        "/health",
-        "/healthz",
-        "/ready",
-        "/live",
-        "/swagger",
-        "/openapi",
-        "/docs",
-        "/static",
-        "/assets",
-    )
-    if any(p == pref or p.startswith(pref + "/") for pref in ignore_prefixes):
+    if p in {"*", "/*"}:
         return False
     if _STATIC_EXT_RE.search(p):
         return False
@@ -800,7 +789,19 @@ def _resolve_import_path(current_file: str, import_path: str, files: set[str]) -
         return None
     base_dir = os.path.dirname(current_file)
     joined = os.path.normpath(os.path.join(base_dir, p)).replace("\\", "/")
-    candidates = [joined, joined + ".js", joined + ".ts", joined + ".jsx", joined + ".tsx", joined + "/index.js", joined + "/index.ts"]
+    candidates = [
+        joined,
+        joined + ".js",
+        joined + ".ts",
+        joined + ".jsx",
+        joined + ".tsx",
+        joined + ".mjs",
+        joined + ".cjs",
+        joined + "/index.js",
+        joined + "/index.ts",
+        joined + "/index.mjs",
+        joined + "/index.cjs",
+    ]
     for candidate in candidates:
         if candidate in files:
             return candidate
@@ -808,9 +809,17 @@ def _resolve_import_path(current_file: str, import_path: str, files: set[str]) -
 
 
 def _parse_router_symbols(content: str) -> list[str]:
-    symbols = set(re.findall(r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*express\.Router\s*\(", content))
+    symbols = set()
+    for rx in (
+        r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*express\.Router\s*\(",
+        r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*Router\s*\(",
+    ):
+        for m in re.finditer(rx, content):
+            symbols.add(m.group(1))
     if "express.Router(" in content and "router" not in symbols:
         symbols.add("router")
+    if re.search(r"\bexport\s+default\s+Router\s*\(\s*\)", content):
+        symbols.add("__default_export_router__")
     return sorted(symbols)
 
 
@@ -826,21 +835,143 @@ def _parse_import_aliases(file_path: str, content: str, files: set[str]) -> dict
         resolved = _resolve_import_path(file_path, imp, files)
         if resolved:
             aliases[alias] = resolved
+    for m in re.finditer(r"\bimport\s+\*\s+as\s+([A-Za-z_]\w*)\s+from\s+['\"]([^'\"]+)['\"]", content):
+        alias, imp = m.group(1), m.group(2)
+        resolved = _resolve_import_path(file_path, imp, files)
+        if resolved:
+            aliases[alias] = resolved
+    for m in re.finditer(r"\bimport\s*\{([^}]+)\}\s*from\s*['\"]([^'\"]+)['\"]", content, flags=re.S):
+        imp = m.group(2)
+        resolved = _resolve_import_path(file_path, imp, files)
+        if not resolved:
+            continue
+        for part in m.group(1).split(","):
+            token = part.strip()
+            if not token:
+                continue
+            local = token.split(" as ", 1)[1].strip() if " as " in token else token
+            if re.fullmatch(r"[A-Za-z_]\w*", local):
+                aliases[local] = resolved
     return aliases
 
 
-def _build_graph(file_paths: list[str], read_file: Callable[[str], str | None]) -> tuple[list[RouterMountEdge], dict[str, list[str]], dict[str, dict[str, str]]]:
+def _extract_balanced_block(content: str, open_index: int, open_char: str, close_char: str) -> tuple[str, int] | None:
+    if open_index < 0 or open_index >= len(content) or content[open_index] != open_char:
+        return None
+    depth = 1
+    i = open_index + 1
+    quote = ""
+    while i < len(content):
+        ch = content[i]
+        if quote:
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == quote:
+                quote = ""
+            i += 1
+            continue
+        if ch in {"'", '"', "`"}:
+            quote = ch
+            i += 1
+            continue
+        if ch == open_char:
+            depth += 1
+        elif ch == close_char:
+            depth -= 1
+            if depth == 0:
+                return content[open_index + 1 : i], i
+        i += 1
+    return None
+
+
+def _is_string_literal(expr: str) -> bool:
+    text = expr.strip()
+    return bool(re.fullmatch(r"['\"][^'\"]*['\"]", text))
+
+
+def _strip_string_literal(expr: str) -> str:
+    text = expr.strip()
+    if _is_string_literal(text):
+        return text[1:-1]
+    return text
+
+
+def _parse_exported_router_symbol(content: str, router_symbols: list[str]) -> str:
+    if "__default_export_router__" in router_symbols:
+        return "__default_export_router__"
+    m = re.search(r"\bmodule\.exports\s*=\s*([A-Za-z_]\w*)", content)
+    if m and m.group(1) in router_symbols:
+        return m.group(1)
+    m = re.search(r"\bexport\s+default\s+([A-Za-z_]\w*)", content)
+    if m and m.group(1) in router_symbols:
+        return m.group(1)
+    if len(router_symbols) == 1:
+        return router_symbols[0]
+    preferred = [s for s in router_symbols if s not in {"router", "__default_export_router__"}]
+    if preferred:
+        return sorted(preferred)[0]
+    if router_symbols:
+        return sorted(router_symbols)[0]
+    return "router"
+
+
+def _parse_route_collection_arrays(content: str) -> dict[str, list[dict[str, str]]]:
+    """
+    Parse static route collections, e.g.:
+      const defaultRoutes = [{ path: '/auth', route: authRoute }]
+    """
+    route_collections: dict[str, list[dict[str, str]]] = {}
+    for m in re.finditer(r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*\[", content):
+        arr_name = m.group(1)
+        open_idx = m.end() - 1
+        block = _extract_balanced_block(content, open_idx, "[", "]")
+        if not block:
+            continue
+        body, _ = block
+        entries: list[dict[str, str]] = []
+        for om in re.finditer(r"\{([^{}]*)\}", body):
+            obj_text = om.group(1)
+            row: dict[str, str] = {}
+            for token in _split_args(obj_text):
+                if ":" not in token:
+                    continue
+                key, value = token.split(":", 1)
+                key = key.strip().strip("'\"`")
+                value = value.strip()
+                if not key:
+                    continue
+                row[key] = _strip_string_literal(value) if _is_string_literal(value) else value
+            if row:
+                entries.append(row)
+        if entries:
+            route_collections[arr_name] = entries
+    return route_collections
+
+
+def _build_graph(
+    file_paths: list[str],
+    read_file: Callable[[str], str | None],
+) -> tuple[list[RouterMountEdge], dict[str, list[str]], dict[str, dict[str, str]], dict[RouterIdentity, list[str]]]:
     files = set(file_paths)
     router_symbols_by_file: dict[str, list[str]] = {}
     import_aliases_by_file: dict[str, dict[str, str]] = {}
+    exported_router_symbol_by_file: dict[str, str] = {}
+    file_content_cache: dict[str, str] = {}
     for file_path in sorted(file_paths):
         if not file_path.endswith((".js", ".ts", ".jsx", ".tsx")):
             continue
         content = read_file(file_path) or ""
+        file_content_cache[file_path] = content
         router_symbols_by_file[file_path] = _parse_router_symbols(content)
         import_aliases_by_file[file_path] = _parse_import_aliases(file_path, content, files)
+        exported_router_symbol_by_file[file_path] = _parse_exported_router_symbol(
+            content,
+            router_symbols_by_file[file_path],
+        )
 
     edges: list[RouterMountEdge] = []
+    edge_seen: set[tuple[str, str, str, str, str]] = set()
     router_middleware: dict[RouterIdentity, list[str]] = {}
     # Balanced-paren finder: locate `symbol.use(` and extract args body
     # respecting nested parens so `require(...)` doesn't break the match.
@@ -869,11 +1000,170 @@ def _build_graph(file_paths: list[str], read_file: Callable[[str], str | None]) 
             i += 1
         return None
 
+    def _resolve_child_router(source_file: str, aliases: dict[str, str], child_expr: str) -> tuple[str, str] | None:
+        token = child_expr.strip()
+        if not token:
+            return None
+
+        inline_req = re.search(r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", token)
+        if inline_req:
+            resolved = _resolve_import_path(source_file, inline_req.group(1), files)
+            if not resolved:
+                return None
+            child_file = resolved
+        else:
+            child_alias = re.sub(r"[^A-Za-z0-9_]", "", token.split(".")[-1])
+            child_file = aliases.get(child_alias, source_file)
+
+            # Named/default import to another file.
+            if child_alias in aliases:
+                child_file = aliases[child_alias]
+            elif child_alias in (router_symbols_by_file.get(source_file, []) or []):
+                child_file = source_file
+            else:
+                return None
+
+        child_symbols = router_symbols_by_file.get(child_file, []) or ["router"]
+        child_symbol = ""
+        child_alias = re.sub(r"[^A-Za-z0-9_]", "", token.split(".")[-1])
+        if child_alias in child_symbols:
+            child_symbol = child_alias
+        else:
+            exported_symbol = exported_router_symbol_by_file.get(child_file, "")
+            if exported_symbol and exported_symbol in child_symbols:
+                child_symbol = exported_symbol
+        if not child_symbol:
+            preferred = [s for s in child_symbols if s not in {"router", "__default_export_router__"}]
+            if preferred:
+                child_symbol = sorted(preferred)[0]
+            else:
+                child_symbol = sorted(child_symbols)[0]
+        return child_file, child_symbol
+
+    def _add_edge(
+        source_file: str,
+        parent_symbol: str,
+        mount_path: str,
+        child_expr: str,
+        middleware_tokens: list[str],
+    ) -> None:
+        parent = RouterIdentity(
+            source_file,
+            "__root__" if parent_symbol in _APP_SYMBOLS else parent_symbol,
+        )
+        aliases = import_aliases_by_file.get(source_file, {})
+        resolved_child = _resolve_child_router(source_file, aliases, child_expr)
+        if not resolved_child:
+            # Keep middleware context even when child router is unresolved.
+            if middleware_tokens:
+                current = router_middleware.get(parent, [])
+                router_middleware[parent] = sorted(set(current + middleware_tokens))
+            return
+        child_file, child_symbol = resolved_child
+        child = RouterIdentity(child_file, child_symbol)
+        key = (parent.file_path, parent.router_symbol, child.file_path, child.router_symbol, mount_path)
+        if key in edge_seen:
+            return
+        edge_seen.add(key)
+        edges.append(
+            RouterMountEdge(
+                parent=parent,
+                child=child,
+                mount_path=mount_path,
+                middleware_tokens=sorted(set(middleware_tokens)),
+            )
+        )
+
+    def _parse_router_chain_mounts(content: str, start_idx: int, parent_symbol: str, source_file: str) -> None:
+        i = start_idx
+        while i < len(content):
+            while i < len(content) and content[i].isspace():
+                i += 1
+            if i >= len(content) or content[i] != ".":
+                break
+            if not content.startswith(".use", i):
+                break
+            i += len(".use")
+            while i < len(content) and content[i].isspace():
+                i += 1
+            if i >= len(content) or content[i] != "(":
+                break
+            args_block = _extract_balanced_block(content, i, "(", ")")
+            if not args_block:
+                break
+            args_body, close_idx = args_block
+            args = _split_args(args_body)
+            if args:
+                if len(args) == 1:
+                    mount_path_value = "/"
+                    child_expr = args[0].strip()
+                    middleware_tokens = []
+                else:
+                    mount_expr = args[0].strip()
+                    child_expr = args[-1].strip()
+                    middleware_tokens = _extract_call_tokens(args[1:-1])
+                    if _is_string_literal(mount_expr):
+                        mount_path_value = _normalize_path(_strip_string_literal(mount_expr))
+                    else:
+                        mount_path_value = ""
+                if mount_path_value:
+                    _add_edge(source_file, parent_symbol, mount_path_value, child_expr, middleware_tokens)
+                elif middleware_tokens:
+                    parent = RouterIdentity(source_file, "__root__" if parent_symbol in _APP_SYMBOLS else parent_symbol)
+                    current = router_middleware.get(parent, [])
+                    router_middleware[parent] = sorted(set(current + middleware_tokens))
+            i = close_idx + 1
+
     for file_path in sorted(file_paths):
         if not file_path.endswith((".js", ".ts", ".jsx", ".tsx")):
             continue
-        content = read_file(file_path) or ""
+        content = file_content_cache.get(file_path, "")
         aliases = import_aliases_by_file.get(file_path, {})
+
+        # Support declaration chains such as:
+        #   const api = Router().use(tagsController).use(authController)
+        for m in re.finditer(r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*Router\s*\(\s*\)", content):
+            _parse_router_chain_mounts(content, m.end(), m.group(1), file_path)
+
+        # Support default export chains:
+        #   export default Router().use('/api', api)
+        for m in re.finditer(r"\bexport\s+default\s+Router\s*\(\s*\)", content):
+            _parse_router_chain_mounts(content, m.end(), "__default_export_router__", file_path)
+
+        # Support dynamic route collection mounts:
+        #   defaultRoutes.forEach(route => router.use(route.path, route.route))
+        route_collections = _parse_route_collection_arrays(content)
+        for fm in re.finditer(r"\b([A-Za-z_]\w*)\.forEach\s*\(", content):
+            collection_name = fm.group(1)
+            rows = route_collections.get(collection_name, [])
+            if not rows:
+                continue
+            args_body = _extract_balanced_args(content, fm.end())
+            if args_body is None or "=>" not in args_body:
+                continue
+            left, right = args_body.split("=>", 1)
+            iter_var = left.strip()
+            if iter_var.startswith("(") and iter_var.endswith(")"):
+                iter_var = iter_var[1:-1].strip()
+            iter_var = iter_var.split(",", 1)[0].strip()
+            if not re.fullmatch(r"[A-Za-z_]\w*", iter_var):
+                continue
+            body = right.strip()
+            for um in re.finditer(
+                rf"\b([A-Za-z_]\w*)\.use\s*\(\s*{re.escape(iter_var)}\.([A-Za-z_]\w*)\s*,\s*{re.escape(iter_var)}\.([A-Za-z_]\w*)\s*\)",
+                body,
+            ):
+                parent_symbol = um.group(1)
+                path_prop = um.group(2)
+                route_prop = um.group(3)
+                for row in rows:
+                    mount_path_raw = row.get(path_prop, "")
+                    child_expr = row.get(route_prop, "")
+                    if not mount_path_raw or not child_expr:
+                        continue
+                    mount_path = _normalize_path(str(mount_path_raw))
+                    _add_edge(file_path, parent_symbol, mount_path, child_expr, [])
+
         for m in use_header_rx.finditer(content):
             args_body = _extract_balanced_args(content, m.end())
             if args_body is None:
@@ -882,56 +1172,22 @@ def _build_graph(file_paths: list[str], read_file: Callable[[str], str | None]) 
             args = _split_args(args_body)
             if not args:
                 continue
-            mount_path = args[0].strip()
-            maybe_child = args[-1].strip()
-            parent = (
-                RouterIdentity(file_path, "__root__")
-                if parent_symbol in _APP_SYMBOLS
-                else RouterIdentity(file_path, parent_symbol)
-            )
-            # router.use(middleware) or router.use('/x', middleware)
-            mount_is_static = bool(re.fullmatch(r"['\"][^'\"]*['\"]", mount_path))
-            mount_path_value = _normalize_path(mount_path[1:-1]) if mount_is_static else ""
-
-            child_alias = re.sub(r"[^A-Za-z0-9_]", "", maybe_child.split(".")[-1])
-            child_file = aliases.get(child_alias, file_path)
-            child_symbols = router_symbols_by_file.get(child_file, []) or ["router"]
-            is_child_router = child_alias in child_symbols or child_alias in aliases
-
-            # Inline require support for mounting
-            inline_req = re.search(r"require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", maybe_child)
-            if inline_req:
-                resolved = _resolve_import_path(file_path, inline_req.group(1), files)
-                if resolved:
-                    child_file = resolved
-                    child_symbols = router_symbols_by_file.get(child_file, []) or ["router"]
-                    is_child_router = True
-                    child_alias = child_symbols[0] if child_symbols else "router"
-
-            if mount_is_static and is_child_router:
-                middleware_tokens = _extract_call_tokens(args[1:-1])
-                if child_alias in child_symbols:
-                    child_symbol = child_alias
-                elif len(child_symbols) > 1:
-                    preferred = [s for s in child_symbols if s.lower() != "router"]
-                    child_symbol = preferred[0] if preferred else child_symbols[0]
-                else:
-                    child_symbol = child_symbols[0]
-                child = RouterIdentity(child_file, child_symbol)
-                edges.append(
-                    RouterMountEdge(
-                        parent=parent,
-                        child=child,
-                        mount_path=mount_path_value,
-                        middleware_tokens=middleware_tokens,
-                    )
-                )
+            if len(args) == 1:
+                mount_path_value = "/"
+                maybe_child = args[0].strip()
+                middleware_tokens = []
             else:
-                # Deterministically ignore non-static mount expressions, but keep middleware if explicit.
-                tokens = _extract_call_tokens(args if not mount_is_static else args[1:])
-                if tokens:
-                    current = router_middleware.get(parent, [])
-                    router_middleware[parent] = sorted(set(current + tokens))
+                mount_path_expr = args[0].strip()
+                maybe_child = args[-1].strip()
+                middleware_tokens = _extract_call_tokens(args[1:-1])
+                mount_path_value = _normalize_path(_strip_string_literal(mount_path_expr)) if _is_string_literal(mount_path_expr) else ""
+
+            if mount_path_value:
+                _add_edge(file_path, parent_symbol, mount_path_value, maybe_child, middleware_tokens)
+            elif middleware_tokens:
+                parent = RouterIdentity(file_path, "__root__" if parent_symbol in _APP_SYMBOLS else parent_symbol)
+                current = router_middleware.get(parent, [])
+                router_middleware[parent] = sorted(set(current + middleware_tokens))
     edges = sorted(
         edges,
         key=lambda e: (

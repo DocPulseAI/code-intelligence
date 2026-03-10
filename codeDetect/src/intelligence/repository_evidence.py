@@ -10,6 +10,9 @@ import os
 import re
 from typing import Any, Callable
 
+from src.file_filter import FileFilter
+from src.intelligence.data_model_graph import extract_mongoose_models
+
 
 # ---------------------------------------------------------------------------
 # Internal helpers
@@ -20,50 +23,57 @@ def _basename(path: str) -> str:
 
 
 def _module_key(path: str) -> str:
-    """Derive a module grouping key from a file path strictly based on Phase 4 rules.
-    Only create modules from routes/, controllers/, models/, services/, features/, pages/
-    Ignore root-level config scripts natively via _NOISE_COMPONENT_NAMES.
     """
-    normalized_path = path.replace("\\", "/")
-    
-    # Priority 1: features/ directories (Phase 4 spec)
-    m_feat = re.search(r'/features/([a-zA-Z0-9_-]+)/', normalized_path, re.IGNORECASE)
-    if m_feat:
-        return m_feat.group(1).lower()
+    Derive domain module names from folder structure.
 
-    # Priority 2: backend/src/modules/{module}/*
-    m_mod = re.search(r'/modules/([a-zA-Z0-9_-]+)/', normalized_path, re.IGNORECASE)
-    if m_mod:
-        return m_mod.group(1).lower()
-
-    basename = _basename(path)
-    # Priority 3: Component suffix patterns
-    m_suf = re.match(r'^([a-zA-Z0-9_]+)(Routes?|Controller|Service|Repository)\.jsx?$', basename, re.IGNORECASE)
-    if m_suf:
-        return m_suf.group(1).lower()
-
-    # Priority 4: Strict allowed parent directory logic
-    ALLOWED_MODULE_DIRS = {"routes", "controllers", "models", "services", "features", "pages"}
+    Example:
+      routes/auth, controllers/auth, services/auth -> auth
+    """
+    normalized_path = path.replace("\\", "/").strip("/")
     parts = [p for p in normalized_path.split("/") if p]
-    
-    # If the file's direct parent is one of the allowed dirs, the module is the prefix of the file
-    if len(parts) >= 2 and parts[-2].lower() in ALLOWED_MODULE_DIRS:
-        name_without_ext = os.path.splitext(basename)[0]
-        # Strip common suffixes conceptually if they slipped via casing
-        for suffix in ["route", "routes", "controller", "service", "model", "page", "repository"]:
-            if name_without_ext.lower().endswith(suffix):
-                return name_without_ext[:-len(suffix)].rstrip('.-_').lower()
-        return name_without_ext.rstrip('.-_').lower()
+    if not parts:
+        return "root"
 
-    # Priority 5: Fallback to the top-level conceptual folder if deeply nested inside allowed dirs
+    # Strong module-domain hint.
     for idx, part in enumerate(parts):
-        if part.lower() in ALLOWED_MODULE_DIRS and idx + 1 < len(parts):
-             # Just use the name of the directory or file directly under it
-             name_without_ext = os.path.splitext(parts[idx+1])[0]
-             return name_without_ext.lower()
+        if part.lower() == "modules" and idx + 1 < len(parts):
+            return parts[idx + 1].lower()
 
-    # Fallback default
-    return parts[0].lower() if parts else "root"
+    module_dirs = {"routes", "controllers", "services", "models", "repositories", "features", "pages"}
+    for idx, part in enumerate(parts):
+        lower = part.lower()
+        if lower not in module_dirs:
+            continue
+        if idx + 1 >= len(parts):
+            continue
+        next_part = parts[idx + 1]
+        # routes/auth/index.js -> auth
+        if idx + 2 < len(parts):
+            after = parts[idx + 2]
+            if "." in after:
+                return next_part.lower()
+        # routes/auth.routes.js -> auth
+        stem = os.path.splitext(next_part)[0]
+        stem = re.sub(r"\.(routes?|controller|service|model|repository)$", "", stem, flags=re.IGNORECASE)
+        stem = re.sub(r"(routes?|controller|service|model|repository)$", "", stem, flags=re.IGNORECASE)
+        stem = stem.strip("._-").lower()
+        if stem:
+            return stem
+
+    basename = os.path.splitext(_basename(path))[0]
+    basename = re.sub(r"\.(routes?|controller|service|model|repository)$", "", basename, flags=re.IGNORECASE)
+    basename = re.sub(r"(routes?|controller|service|model|repository)$", "", basename, flags=re.IGNORECASE)
+    basename = basename.strip("._-").lower()
+    if basename:
+        return basename
+
+    for part in parts:
+        if part.lower() in {"src", "server", "backend", "app"}:
+            continue
+        if part.startswith("."):
+            continue
+        return part.lower()
+    return "root"
 
 
 def _classify_component_type(file_paths: list[str]) -> str:
@@ -162,6 +172,8 @@ def _build_components(file_paths: list[str], features_map: dict[str, dict],
     """Group files into logical components/modules."""
     modules: dict[str, list[str]] = {}
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         # Skip files that only resolve to a noise/config filename as their module key
         basename = os.path.basename(path).lower()
         if basename in _NOISE_COMPONENT_NAMES:
@@ -206,48 +218,106 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
         for f in comp.get("files", []):
             file_to_component[f] = comp["name"]
 
-    # ---- Express mount resolution ----
-    # Detect whether the repo has Express patterns.
-    express_files: list[str] = [
-        p for p in file_paths
-        if p.lower().endswith((".js", ".ts", ".mjs", ".cjs"))
-    ]
-    mount_prefixes: dict[str, str] = {}  # file_path → resolved prefix
-    if express_files:
-        try:
-            from src.intelligence.route_resolution_engine import (
-                _build_graph, _join_paths, _APP_SYMBOLS, RouterIdentity,
+    # ---- Express mount resolution by router identity ----
+    express_files: list[str] = [p for p in file_paths if p.lower().endswith((".js", ".ts", ".mjs", ".cjs"))]
+    router_symbols_by_file: dict[str, list[str]] = {}
+    mount_contexts: dict[tuple[str, str], list[str]] = {}
+    has_mount_edges = False
+    _app_symbols = {"app", "server", "api"}
+    try:
+        from src.intelligence.route_resolution_engine import (
+            _build_graph,
+            _join_paths,
+            _APP_SYMBOLS,
+            RouterIdentity,
+        )
+        _app_symbols = set(_APP_SYMBOLS)
+        edges, router_symbols_by_file, _, router_middleware = _build_graph(file_paths, read_file)
+        has_mount_edges = bool(edges)
+        incoming: dict[RouterIdentity, list] = {}
+        for edge in edges:
+            incoming.setdefault(edge.child, []).append(edge)
+
+        memo: dict[RouterIdentity, list[tuple[str, tuple[str, ...]]]] = {}
+        active: set[RouterIdentity] = set()
+
+        def resolve_contexts(identity: RouterIdentity, depth: int = 0) -> list[tuple[str, tuple[str, ...]]]:
+            if depth > 15:
+                return []
+            if identity in memo:
+                return memo[identity]
+            if identity in active:
+                return []
+            active.add(identity)
+            edges_in = sorted(
+                incoming.get(identity, []),
+                key=lambda e: (
+                    e.parent.file_path,
+                    e.parent.router_symbol,
+                    e.mount_path,
+                    e.child.file_path,
+                    e.child.router_symbol,
+                ),
             )
-            edges, router_symbols_by_file, import_aliases_by_file, _ = _build_graph(file_paths, read_file)
+            if not edges_in:
+                if identity.router_symbol == "__root__" or not has_mount_edges:
+                    contexts = [("", tuple())]
+                else:
+                    contexts = []
+            else:
+                merged = set()
+                contexts: list[tuple[str, tuple[str, ...]]] = []
+                for edge in edges_in:
+                    for base_path, base_tokens in resolve_contexts(edge.parent, depth + 1):
+                        next_path = _join_paths(base_path, edge.mount_path)
+                        next_tokens = tuple(sorted(set(list(base_tokens) + list(edge.middleware_tokens))))
+                        key = (next_path, next_tokens)
+                        if key not in merged:
+                            merged.add(key)
+                            contexts.append(key)
+            local_tokens = tuple(sorted(set(router_middleware.get(identity, []))))
+            if local_tokens:
+                contexts = [(p, tuple(sorted(set(list(t) + list(local_tokens))))) for p, t in contexts]
+            active.remove(identity)
+            contexts = sorted(contexts, key=lambda x: (x[0], x[1]))
+            memo[identity] = contexts
+            return contexts
 
-            # Build a map: child file → mount_path from the mount edges.
-            # If a file is mounted multiple times, concatenate the full chain.
-            # We do a simple BFS from root nodes.
-            incoming: dict[str, list] = {}
-            for edge in edges:
-                incoming.setdefault(edge.child.file_path, []).append(edge)
+        for file_path in express_files:
+            symbols = router_symbols_by_file.get(file_path, []) or []
+            for symbol in symbols:
+                identity = RouterIdentity(file_path, symbol)
+                prefixes = sorted({p for p, _ in resolve_contexts(identity, 0)})
+                if prefixes:
+                    mount_contexts[(file_path, symbol)] = prefixes
+            root_identity = RouterIdentity(file_path, "__root__")
+            root_prefixes = sorted({p for p, _ in resolve_contexts(root_identity, 0)})
+            if root_prefixes:
+                mount_contexts[(file_path, "__root__")] = root_prefixes
+    except Exception:
+        # Fall back to raw per-file routes when mount graph parsing fails.
+        router_symbols_by_file = {}
+        mount_contexts = {}
+        has_mount_edges = False
 
-            def _resolve_prefix(file_path: str, visited: set[str] | None = None) -> str:
-                if visited is None:
-                    visited = set()
-                if file_path in visited:
-                    return ""
-                visited.add(file_path)
-                edges_in = incoming.get(file_path, [])
-                if not edges_in:
-                    return ""
-                # Take the first mount chain (deterministic: edges are sorted).
-                edge = edges_in[0]
-                parent_prefix = _resolve_prefix(edge.parent.file_path, visited)
-                return _join_paths(parent_prefix, edge.mount_path)
-
-            for fp in express_files:
-                prefix = _resolve_prefix(fp)
-                if prefix:
-                    mount_prefixes[fp] = prefix
-        except (ImportError, Exception):
-            # If route_resolution_engine is unavailable, fall through.
-            pass
+    def _prefixes_for(file_path: str, router_symbol: str) -> list[str]:
+        symbol = (router_symbol or "").strip()
+        if symbol in _app_symbols:
+            symbol = "__root__"
+        known = router_symbols_by_file.get(file_path, [])
+        if not symbol and len(known) == 1:
+            symbol = known[0]
+        if symbol and symbol not in {"__root__"} and len(known) == 1 and symbol not in known:
+            symbol = known[0]
+        if symbol:
+            prefixes = mount_contexts.get((file_path, symbol), [])
+            if prefixes:
+                return prefixes
+        if mount_contexts.get((file_path, "__root__")):
+            return mount_contexts[(file_path, "__root__")]
+        if not has_mount_edges:
+            return [""]
+        return []
 
     # ---- Python router prefix resolution ----
     # Python files may have internal router_prefixes (e.g. APIRouter(prefix="/api"))
@@ -281,32 +351,167 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
 
     # ---- Regex fallback: chained .route('/path').get().post() patterns ----
     # The AST parser misses chained routes like router.route('/').get(protect, getGoals).post(protect, setGoal)
-    _CHAIN_ROUTE_RX = re.compile(
-        r"""(?:router|app)\s*\.\s*route\s*\(\s*['"]([^'"]+)['"]\s*\)"""
-        r"""((?:\s*\.\s*(?:get|post|put|delete|patch)\s*\([^)]*\))+)""",
-        re.IGNORECASE
+    _CHAIN_ROUTE_HEAD_RX = re.compile(
+        r"""\b([A-Za-z_]\w*)\s*\.\s*route\s*\(""",
+        re.IGNORECASE,
     )
-    _CHAIN_METHOD_RX = re.compile(
-        r"""\.\s*(get|post|put|delete|patch)\s*\(([^)]*)\)""",
-        re.IGNORECASE
+    _CHAIN_METHOD_HEAD_RX = re.compile(
+        r"""\.\s*(get|post|put|delete|patch|options|head)\s*\(""",
+        re.IGNORECASE,
     )
     _AUTH_KEYWORDS_SET = {"protect", "auth", "authenticate", "verifytoken", "jwt"}
+    FASTIFY_ROUTE_RX = re.compile(
+        r"\bfastify\.(get|post|put|delete|patch|options|head)\s*\(\s*['\"]([^'\"]+)['\"]",
+        re.IGNORECASE,
+    )
+    KOA_ROUTER_ROUTE_RX = re.compile(
+        r"\b([A-Za-z_]\w*)\.(get|post|put|delete|patch|options|head)\s*\(\s*['\"]([^'\"]+)['\"]",
+        re.IGNORECASE,
+    )
+
+    def _find_matching_paren(text: str, open_idx: int) -> int:
+        if open_idx < 0 or open_idx >= len(text) or text[open_idx] != "(":
+            return -1
+        depth = 1
+        i = open_idx + 1
+        quote = ""
+        while i < len(text):
+            ch = text[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+                i += 1
+                continue
+            if ch in {"'", '"', "`"}:
+                quote = ch
+                i += 1
+                continue
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+                if depth == 0:
+                    return i
+            i += 1
+        return -1
+
+    def _split_top_level_args(args_text: str) -> list[str]:
+        tokens: list[str] = []
+        buf: list[str] = []
+        par = arr = obj = 0
+        quote = ""
+        i = 0
+        while i < len(args_text):
+            ch = args_text[i]
+            if quote:
+                buf.append(ch)
+                if ch == "\\" and i + 1 < len(args_text):
+                    buf.append(args_text[i + 1])
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = ""
+                i += 1
+                continue
+            if ch in {"'", '"', "`"}:
+                quote = ch
+                buf.append(ch)
+                i += 1
+                continue
+            if ch == "(":
+                par += 1
+            elif ch == ")":
+                par = max(0, par - 1)
+            elif ch == "[":
+                arr += 1
+            elif ch == "]":
+                arr = max(0, arr - 1)
+            elif ch == "{":
+                obj += 1
+            elif ch == "}":
+                obj = max(0, obj - 1)
+            if ch == "," and par == arr == obj == 0:
+                tok = "".join(buf).strip()
+                if tok:
+                    tokens.append(tok)
+                buf = []
+            else:
+                buf.append(ch)
+            i += 1
+        tok = "".join(buf).strip()
+        if tok:
+            tokens.append(tok)
+        return tokens
+
+    def _parse_chain_methods(chain_body: str) -> list[tuple[str, str]]:
+        methods: list[tuple[str, str]] = []
+        idx = 0
+        while idx < len(chain_body):
+            mm = _CHAIN_METHOD_HEAD_RX.search(chain_body, idx)
+            if not mm:
+                break
+            method = mm.group(1).upper()
+            open_idx = mm.end() - 1
+            close_idx = _find_matching_paren(chain_body, open_idx)
+            if close_idx < 0:
+                break
+            args_str = chain_body[open_idx + 1 : close_idx]
+            methods.append((method, args_str))
+            idx = close_idx + 1
+        return methods
+
+    def _parse_chain_methods_from(content_text: str, start_idx: int) -> tuple[list[tuple[str, str]], int]:
+        methods: list[tuple[str, str]] = []
+        idx = start_idx
+        while idx < len(content_text):
+            while idx < len(content_text) and content_text[idx].isspace():
+                idx += 1
+            mm = _CHAIN_METHOD_HEAD_RX.match(content_text, idx)
+            if not mm:
+                break
+            method = mm.group(1).upper()
+            open_idx = mm.end() - 1
+            close_idx = _find_matching_paren(content_text, open_idx)
+            if close_idx < 0:
+                break
+            args_str = content_text[open_idx + 1 : close_idx]
+            methods.append((method, args_str))
+            idx = close_idx + 1
+        return methods, idx
 
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         if not path.lower().endswith((".js", ".ts", ".mjs", ".cjs")):
             continue
         content = read_file(path)
         if not content:
             continue
-        prefix = mount_prefixes.get(path, "")
-        for rm in _CHAIN_ROUTE_RX.finditer(content):
-            route_path = rm.group(1)
-            chain_body = rm.group(2)
+        for rm in _CHAIN_ROUTE_HEAD_RX.finditer(content):
+            router_symbol = rm.group(1)
+            route_open = rm.end() - 1
+            route_close = _find_matching_paren(content, route_open)
+            if route_close < 0:
+                continue
+            route_args = _split_top_level_args(content[route_open + 1 : route_close])
+            if not route_args:
+                continue
+            route_path_token = route_args[0].strip()
+            if len(route_path_token) < 2 or route_path_token[0] != route_path_token[-1] or route_path_token[0] not in {"'", '"', "`"}:
+                continue
+            route_path = route_path_token[1:-1]
+            chain_methods, _ = _parse_chain_methods_from(content, route_close + 1)
+            if not chain_methods:
+                continue
             line_num = content[:rm.start()].count("\n") + 1
-            for cm in _CHAIN_METHOD_RX.finditer(chain_body):
-                method = cm.group(1).upper()
-                args_str = cm.group(2)
-                arg_tokens = [t.strip() for t in args_str.split(",") if t.strip()]
+            prefixes = _prefixes_for(path, router_symbol)
+            if not prefixes:
+                continue
+            for method, args_str in chain_methods:
+                arg_tokens = _split_top_level_args(args_str)
                 handler = arg_tokens[-1] if arg_tokens else ""
                 middleware_tokens = arg_tokens[:-1] if len(arg_tokens) > 1 else []
                 auth_required = any(
@@ -324,30 +529,25 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                         ctrl_file = re.sub(r"\.(jsx?|tsx?)$", "", ctrl_file, flags=re.IGNORECASE)
                         handler = f"{ctrl_file}.{handler}"
 
-            # Resolve full path with mount prefix
-                if prefix and route_path:
-                    if route_path == "/":
+                # Resolve full path with mount prefixes.
+                full_paths = []
+                for prefix in prefixes:
+                    if prefix and route_path:
+                        if route_path == "/":
+                            full_path = prefix
+                        else:
+                            full_path = prefix.rstrip("/") + "/" + route_path.lstrip("/")
+                    elif prefix:
                         full_path = prefix
                     else:
-                        full_path = prefix.rstrip("/") + "/" + route_path.lstrip("/")
-                elif prefix:
-                    full_path = prefix
-                else:
-                    full_path = route_path
-                if full_path and not full_path.startswith("/"):
-                    full_path = "/" + full_path
-                full_path = full_path.rstrip("/") or "/"
+                        full_path = route_path
+                    if full_path and not full_path.startswith("/"):
+                        full_path = "/" + full_path
+                    full_paths.append(full_path.rstrip("/") or "/")
 
                 # Fix 3: SPA Fallback Filtering
-                if full_path in ["", "/", "/*"]:
-                    continue
                 if "sendFile" in content or "index.html" in content:
                     continue
-
-                key = (method, full_path, path)
-                if key in seen:
-                    continue
-                seen.add(key)
 
                 component = file_to_component.get(path)
                 if not component or component == "root":
@@ -366,23 +566,179 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                                         comp_key = comp_key[:-len(sfx)].rstrip(".-_")
                     component = comp_key or "root"
 
-                entry: dict[str, Any] = {
-                    "method": method,
-                    "path": full_path,
-                    "controller": handler,
-                    "module": component,
-                    "router_file": path,
-                    "source_file": path,
-                    "line": line_num,
-                }
-                if auth_required:
-                    entry["auth_required"] = True
-                apis.append(entry)
+                for full_path in full_paths:
+                    if full_path in ["", "/*"]:
+                        continue
+                    key = (method, full_path, path)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    entry: dict[str, Any] = {
+                        "method": method,
+                        "path": full_path,
+                        "controller": handler,
+                        "module": component,
+                        "router_file": path,
+                        "source_file": path,
+                        "line": line_num,
+                    }
+                    if auth_required:
+                        entry["auth_required"] = True
+                    apis.append(entry)
+
+        # ---- Fastify direct routes: fastify.get('/path', ...) ----
+        if "fastify" in content:
+            for fm in FASTIFY_ROUTE_RX.finditer(content):
+                method = fm.group(1).upper()
+                route_path = fm.group(2)
+                line_num = content[: fm.start()].count("\n") + 1
+
+                full_path = route_path or "/"
+                if full_path and not full_path.startswith("/"):
+                    full_path = "/" + full_path
+                full_path = full_path.rstrip("/") or "/"
+
+                key = (method, full_path, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                component = file_to_component.get(path) or _module_key(path) or "root"
+                apis.append(
+                    {
+                        "method": method,
+                        "path": full_path,
+                        "controller": "",
+                        "module": component,
+                        "router_file": path,
+                        "source_file": path,
+                        "line": line_num,
+                    }
+                )
+
+        # ---- Koa router routes: router.get('/path', ...) when using koa-router ----
+        if "koa-router" in content or "from 'koa-router'" in content or 'from "koa-router"' in content:
+            for km in KOA_ROUTER_ROUTE_RX.finditer(content):
+                router_sym = km.group(1)
+                method = km.group(2).upper()
+                route_path = km.group(3)
+                line_num = content[: km.start()].count("\n") + 1
+
+                full_path = route_path or "/"
+                if full_path and not full_path.startswith("/"):
+                    full_path = "/" + full_path
+                full_path = full_path.rstrip("/") or "/"
+
+                key = (method, full_path, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                component = file_to_component.get(path) or _module_key(path) or "root"
+                apis.append(
+                    {
+                        "method": method,
+                        "path": full_path,
+                        "controller": router_sym,
+                        "module": component,
+                        "router_file": path,
+                        "source_file": path,
+                        "line": line_num,
+                    }
+                )
+
+    # ---- Django REST Framework router.register(...) fallback ----
+    #
+    # This pass looks for DRF Router registrations such as:
+    #   router = DefaultRouter()
+    #   router.register(r'users', UserViewSet, basename='user')
+    #
+    # and synthesizes canonical RESTful endpoints:
+    #   GET    /users        (list)
+    #   POST   /users        (create)
+    #   GET    /users/{id}   (retrieve)
+    #   PUT    /users/{id}   (update/replace)
+    #   PATCH  /users/{id}   (partial_update)
+    #   DELETE /users/{id}   (destroy)
+    DRF_ROUTER_DEF_RX = re.compile(
+        r"\b([A-Za-z_]\w*)\s*=\s*(?:DefaultRouter|SimpleRouter)\s*\(",
+        re.MULTILINE,
+    )
+    DRF_REGISTER_RX = re.compile(
+        r"\b([A-Za-z_]\w*)\s*\.register\s*\(\s*[ru]?[\"']([^\"']+)[\"']\s*,\s*([A-Za-z_]\w*)",
+        re.MULTILINE,
+    )
 
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
+        if not path.lower().endswith(".py"):
+            continue
+        content = read_file(path) or ""
+        if not content:
+            continue
+
+        # Detect DRF router symbols in this file.
+        router_symbols = {m.group(1) for m in DRF_ROUTER_DEF_RX.finditer(content)}
+        if not router_symbols and "rest_framework" not in content:
+            continue
+
+        for m in DRF_REGISTER_RX.finditer(content):
+            router_sym, raw_prefix, viewset_name = m.group(1), m.group(2), m.group(3)
+            if router_symbols and router_sym not in router_symbols:
+                # Skip registers for non-DRF routers in mixed files.
+                continue
+
+            # Normalize base path.
+            base_path = raw_prefix.strip().strip("/")
+            if not base_path:
+                base_path = ""
+            list_path = "/" + base_path if base_path else "/"
+            detail_path = list_path.rstrip("/") + "/{id}"
+
+            # Map to canonical RESTful operations.
+            drf_methods = [
+                ("GET", list_path),
+                ("POST", list_path),
+                ("GET", detail_path),
+                ("PUT", detail_path),
+                ("PATCH", detail_path),
+                ("DELETE", detail_path),
+            ]
+
+            # Infer component for this file.
+            component = file_to_component.get(path)
+            if not component or component == "root":
+                comp_key = _module_key(path)
+                component = comp_key or "root"
+
+            line_num = content[: m.start()].count("\n") + 1
+            controller = f"{viewset_name}.viewset"
+
+            for method, full_path in drf_methods:
+                key = (method, full_path, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                apis.append(
+                    {
+                        "method": method,
+                        "path": full_path,
+                        "controller": controller,
+                        "module": component,
+                        "router_file": path,
+                        "source_file": path,
+                        "line": line_num,
+                        "auth_required": False,
+                    }
+                )
+
+    for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         feats = features_map.get(path, {})
         endpoints = feats.get("api_endpoints", []) or feats.get("api_routes", []) or []
-        prefix = mount_prefixes.get(path, "")
 
         for ep in endpoints:
             if not isinstance(ep, dict):
@@ -417,41 +773,23 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                 b_name = re.sub(r"[-_\.]", "", b_name)
                 handler = f"{b_name}.rootHandler" if raw_route in ["", "/"] else f"{b_name}.inlineHandler"
 
-            # Resolve full path with mount prefix.
-            # 1. Express cross-file prefix
-            # 2. Python local router/blueprint prefix
-            resolved_prefix = prefix
-            if path.lower().endswith(".py"):
-                local_prefs = feats.get("router_prefixes_resolved", {})
-                if router_symbol in local_prefs:
-                    resolved_prefix = local_prefs[router_symbol]
-
-            if resolved_prefix and raw_route:
-                if raw_route == "/":
-                    full_path = resolved_prefix
-                else:
-                    full_path = resolved_prefix.rstrip("/") + "/" + raw_route.lstrip("/")
-            elif resolved_prefix:
-                full_path = resolved_prefix
-            else:
-                full_path = raw_route
-
-            # Normalize: ensure leading slash, no trailing slash.
-            if full_path and not full_path.startswith("/"):
-                full_path = "/" + full_path
-            full_path = full_path.rstrip("/") or "/"
-
-            # Fix 3: SPA Fallback Filtering
-            if full_path in ["", "/", "/*"]:
-                continue
             content = read_file(path) or ""
             if "sendFile" in content or "index.html" in content:
                 continue
 
-            key = (method, full_path, path)
-            if key in seen:
-                continue
-            seen.add(key)
+            # Resolve mount prefixes.
+            if path.lower().endswith((".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")):
+                resolved_prefixes = _prefixes_for(path, router_symbol)
+                if not resolved_prefixes:
+                    continue
+            elif path.lower().endswith(".py"):
+                local_prefs = feats.get("router_prefixes_resolved", {})
+                if router_symbol in local_prefs:
+                    resolved_prefixes = [str(local_prefs[router_symbol])]
+                else:
+                    resolved_prefixes = [""]
+            else:
+                resolved_prefixes = [""]
 
             # Fix 2: Detect authentication middleware
             _AUTH_KEYWORDS = {"protect", "auth", "authenticate", "verifytoken", "jwt"}
@@ -476,18 +814,40 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                                     comp_key = comp_key[:-len(sfx)].rstrip(".-_")
                 component = comp_key or "root"
 
-            entry: dict[str, Any] = {
-                "method": method,
-                "path": full_path,
-                "controller": handler,
-                "module": component,
-                "router_file": path,
-                "source_file": path,
-                "line": line,
-            }
-            if auth_required:
-                entry["auth_required"] = True
-            apis.append(entry)
+            for resolved_prefix in resolved_prefixes:
+                if resolved_prefix and raw_route:
+                    if raw_route == "/":
+                        full_path = resolved_prefix
+                    else:
+                        full_path = resolved_prefix.rstrip("/") + "/" + raw_route.lstrip("/")
+                elif resolved_prefix:
+                    full_path = resolved_prefix
+                else:
+                    full_path = raw_route
+
+                if full_path and not full_path.startswith("/"):
+                    full_path = "/" + full_path
+                full_path = full_path.rstrip("/") or "/"
+                if full_path in ["", "/*"]:
+                    continue
+
+                key = (method, full_path, path)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                entry: dict[str, Any] = {
+                    "method": method,
+                    "path": full_path,
+                    "controller": handler,
+                    "module": component,
+                    "router_file": path,
+                    "source_file": path,
+                    "line": line,
+                }
+                if auth_required:
+                    entry["auth_required"] = True
+                apis.append(entry)
 
     # Determine strict deterministic sorting
     return sorted(apis, key=lambda a: (a["method"], a["path"]))
@@ -506,11 +866,17 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
     PRISMA_MODEL_RX = re.compile(r"^\s*model\s+(\w+)\s*\{", re.MULTILINE)
     JPA_CLASS_RX = re.compile(r"class\s+(\w+)")
     DJANGO_CLASS_RX = re.compile(r"class\s+(\w+)\s*\(\s*(?:models\.)?Model\s*\)")
+    SQLALCHEMY_MODEL_RX = re.compile(r"class\s+(\w+)\s*\(\s*Base\s*\)")
+    SQLALCHEMY_TABLE_NAME_RX = re.compile(r"__tablename__\s*=\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
+    ALEMBIC_CREATE_TABLE_RX = re.compile(r"op\.create_table\(\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]")
 
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_entity_analysis(path):
+            continue
         feats = features_map.get(path, {})
         tags = schema_tags_map.get(path, [])
         lower = path.lower()
+        content = read_file(path) or ""
 
         # JPA entities (from schema_annotations or tags)
         if "JPA_ENTITY" in tags or feats.get("schema_annotations"):
@@ -526,32 +892,24 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
                     "source_file": path,
                 })
 
-        # Mongoose models
-        mongoose_names = set()
-        for tag in tags:
-            if tag.startswith("MONGOOSE_MODEL:"):
-                model_name = tag.split(":", 1)[1]
-                mongoose_names.add(model_name)
+        # Mongoose models with full schema fields.
+        mongoose_models = extract_mongoose_models(content) if lower.endswith((".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")) else []
+        if not mongoose_models:
+            mongoose_names = set()
+            for tag in tags:
+                if tag.startswith("MONGOOSE_MODEL:"):
+                    mongoose_names.add(tag.split(":", 1)[1])
+            if any(t == "MONGOOSE_SCHEMA" for t in tags):
+                for match in MONGOOSE_MODEL_RX.finditer(content):
+                    mongoose_names.add(match.group(1))
+            for name in sorted(mongoose_names):
+                mongoose_models.append({"name": name, "fields": {}, "relationships": []})
 
-        if any(t == "MONGOOSE_SCHEMA" for t in tags) and not mongoose_names:
-            content = read_file(path) or ""
-            for match in MONGOOSE_MODEL_RX.finditer(content):
-                mongoose_names.add(match.group(1))
-                
-            # Snap-dish constraint: const menuItemSchema = new mongoose.Schema({...})
-            SNAP_SCHEMA_RX = re.compile(r"(?:const|let|var)\s+(\w+?)(?:Schema)?\s*=\s*new\s+(?:mongoose\.)?Schema\b", re.MULTILINE)
-            for match in SNAP_SCHEMA_RX.finditer(content):
-                name = match.group(1)
-                # Normalize menuItem to MenuItem
-                if name:
-                    name = name[0].upper() + name[1:]
-                mongoose_names.add(name)
-                
-        # Register Mongoose Models
-        for model_name in mongoose_names:
-            if model_name:
-                model_name = model_name[0].upper() + model_name[1:]
-            
+        for model in mongoose_models:
+            model_name = str(model.get("name", "")).strip()
+            if not model_name:
+                continue
+            fields = model.get("fields", {}) if isinstance(model.get("fields"), dict) else {}
             if model_name not in seen:
                 seen.add(model_name)
                 entities.append({
@@ -559,23 +917,27 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
                     "type": "mongoose_model",
                     "database": "mongodb",
                     "orm": "mongoose",
+                    "fields": fields,
                     "source_file": path,
                 })
-                
-        # Mongoose relationships (from AST extraction)
-        mongoose_schemas = feats.get("mongoose_schemas", [])
-        for schema_fields in mongoose_schemas:
-            # We assume the schema in the file belongs to the mongoose model in the file
-            # If multiple models, map them broadly. Usually 1 model per file.
-            if len(mongoose_names) > 0:
-                parent_model = list(mongoose_names)[0]
-                for field_name, ref_model in schema_fields.items():
-                    schema_edges.append({
-                        "type": "entity_relation",
-                        "from": parent_model,
-                        "to": ref_model,
-                        "relation": "references",
-                    })
+            else:
+                for row in entities:
+                    if row.get("name") == model_name and not row.get("fields") and fields:
+                        row["fields"] = fields
+                        break
+
+            for rel in model.get("relationships", []):
+                field_name = str(rel.get("field", "")).strip()
+                ref_model = str(rel.get("ref", "")).strip()
+                if not field_name or not ref_model:
+                    continue
+                schema_edges.append({
+                    "type": "entity_relation",
+                    "from": f"{model_name}.{field_name}",
+                    "to": ref_model,
+                    "relation": "references",
+                    "field": field_name,
+                })
 
         # Django models
         if "DJANGO_MODEL" in tags:
@@ -591,6 +953,55 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
                         "orm": "django",
                         "source_file": path,
                     })
+
+        # SQLAlchemy declarative models
+        #
+        # We look for the common pattern:
+        #   Base = declarative_base()
+        #   class User(Base):
+        #       __tablename__ = "users"
+        #
+        # and register both the model and its underlying table if possible.
+        if lower.endswith(".py"):
+            content = read_file(path) or ""
+            if "sqlalchemy" in content or "declarative_base" in content:
+                for match in SQLALCHEMY_MODEL_RX.finditer(content):
+                    model_name = match.group(1)
+                    if model_name and model_name not in seen:
+                        seen.add(model_name)
+                        entities.append({
+                            "name": model_name,
+                            "type": "sqlalchemy_model",
+                            "database": "sql",
+                            "orm": "sqlalchemy",
+                            "source_file": path,
+                        })
+
+                # Table names via __tablename__ (one per class file in most projects)
+                for tmatch in SQLALCHEMY_TABLE_NAME_RX.finditer(content):
+                    table_name = tmatch.group(1)
+                    if table_name and table_name not in seen:
+                        seen.add(table_name)
+                        entities.append({
+                            "name": table_name,
+                            "type": "sql_table",
+                            "database": "sql",
+                            "orm": "sqlalchemy",
+                            "source_file": path,
+                        })
+
+                # Alembic-style migrations: op.create_table("name", ...)
+                for cmatch in ALEMBIC_CREATE_TABLE_RX.finditer(content):
+                    table_name = cmatch.group(1)
+                    if table_name and table_name not in seen:
+                        seen.add(table_name)
+                        entities.append({
+                            "name": table_name,
+                            "type": "sql_table",
+                            "database": "sql",
+                            "orm": "alembic",
+                            "source_file": path,
+                        })
 
         # Prisma models
         if lower.endswith("schema.prisma"):
@@ -780,6 +1191,8 @@ def _build_services(file_paths: list[str],
             file_to_component[f] = comp["name"]
 
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         lower = path.lower().replace("\\", "/")
         feats = features_map.get(path, {})
         classes = feats.get("classes", [])
@@ -869,6 +1282,8 @@ def _build_repositories(file_paths: list[str],
     entity_names = {e["name"] for e in entities}
 
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         lower = path.lower().replace("\\", "/")
         feats = features_map.get(path, {})
         classes = feats.get("classes", [])
@@ -947,6 +1362,8 @@ def _build_routers(file_paths: list[str],
     )
 
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         lower = path.lower().replace("\\", "/")
         feats = features_map.get(path, {})
         annotations = feats.get("annotations", [])
@@ -1185,6 +1602,7 @@ def _build_relationships(components: list[dict],
     # For fast heuristics
     entity_names = {e["name"] for e in entities}
     service_names = {s["name"] for s in services}
+    repository_names = {r["name"] for r in repositories}
     
     # service -> repository relationships
     for svc in services:
@@ -1205,6 +1623,50 @@ def _build_relationships(components: list[dict],
                 "from": repo["name"],
                 "to": repo["entity"],
             })
+
+    # Spring DI: @Autowired field injection between beans
+    #
+    # Detect simple patterns like:
+    #   @Service
+    #   public class OrderService {
+    #       @Autowired
+    #       private PaymentService paymentService;
+    #   }
+    #
+    # and add CALLS_SERVICE relationships: OrderService -> PaymentService.
+    autowired_rx = re.compile(
+        r"@Autowired[\s\r\n]+(?:private|protected|public)?\s*([A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z_][A-Za-z0-9_]*\s*;",
+        re.MULTILINE,
+    )
+
+    bean_classes_by_file: dict[str, list[str]] = {}
+    for comp in components:
+        for file_path in comp.get("files", []):
+            feats = features_map.get(file_path, {})
+            annotations = feats.get("annotations", [])
+            if not any(
+                ann for ann in annotations
+                if any(tok in ann for tok in ("@Service", "@Repository", "@Component", "@Controller", "@RestController"))
+            ):
+                continue
+            classes = feats.get("classes", []) or []
+            if classes:
+                bean_classes_by_file.setdefault(file_path, []).extend(str(c) for c in classes)
+
+    for file_path, bean_classes in bean_classes_by_file.items():
+        content = read_file(file_path) or ""
+        if not content:
+            continue
+        for m in autowired_rx.finditer(content):
+            injected_type = m.group(1)
+            if not injected_type:
+                continue
+            for bean in bean_classes:
+                relationships.append({
+                    "type": "CALLS_SERVICE",
+                    "from": bean,
+                    "to": injected_type,
+                })
 
     # controller -> service calls (using apis for controllers)
     controllers = set()
@@ -1318,7 +1780,7 @@ def _build_relationships(components: list[dict],
     return sorted(unique_rels, key=lambda r: (r.get("from", ""), r.get("to", "")))
 
 
-def _build_mounts(file_paths: list[str], features_map: dict[str, dict]) -> list[dict]:
+def _build_mounts(file_paths: list[str], features_map: dict[str, dict], read_file: Callable[[str], str | None]) -> list[dict]:
     """Collect all explicit router mounts (app.use('/prefix', routerVar)) from AST features."""
     files_set = set(file_paths)
 
@@ -1337,7 +1799,35 @@ def _build_mounts(file_paths: list[str], features_map: dict[str, dict]) -> list[
 
     mounts: list[dict] = []
     seen: set[tuple] = set()
+
+    # Route-resolution mount graph (supports nested/dynamic collection mounts).
+    try:
+        from src.intelligence.route_resolution_engine import _build_graph
+
+        edges, _, _, _ = _build_graph(file_paths, read_file)
+        for edge in edges:
+            key = (edge.mount_path, edge.child.file_path, edge.child.router_symbol, edge.parent.file_path, edge.parent.router_symbol)
+            if key in seen:
+                continue
+            seen.add(key)
+            mounts.append(
+                {
+                    "mount_path": edge.mount_path,
+                    "mounted_router": edge.child.router_symbol,
+                    "parent": edge.parent.router_symbol,
+                    "router": edge.child.router_symbol,
+                    "router_file": edge.child.file_path,
+                    "path": edge.mount_path,
+                    "source_file": edge.parent.file_path,
+                    "line": 0,
+                }
+            )
+    except Exception:
+        pass
+
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_analysis(path):
+            continue
         feats = features_map.get(path, {})
         # From api_mounts (explicit field)
         for m in feats.get("api_mounts", []):
@@ -1375,7 +1865,52 @@ def _build_mounts(file_paths: list[str], features_map: dict[str, dict]) -> list[
                         "source_file": path,
                         "line": ep.get("line", 0),
                     })
-    return sorted(mounts, key=lambda m: m.get("mount_path", ""))
+    return sorted(mounts, key=lambda m: (m.get("mount_path", ""), m.get("source_file", ""), m.get("router_file", "")))
+
+
+def _build_quality_warnings(apis: list[dict], mounts: list[dict], entities: list[dict]) -> list[str]:
+    warnings: list[str] = []
+
+    if not apis:
+        warnings.append("QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)")
+
+    mount_prefixes = sorted(
+        {
+            str(m.get("mount_path", "")).strip()
+            for m in mounts
+            if str(m.get("mount_path", "")).strip() and str(m.get("mount_path", "")).strip() != "/"
+        }
+    )
+    mounted_router_files = {
+        str(m.get("router_file", "")).strip()
+        for m in mounts
+        if str(m.get("router_file", "")).strip()
+    }
+    if mount_prefixes and mounted_router_files:
+        unresolved_paths: list[str] = []
+        for api in apis:
+            src = str(api.get("source_file", "")).strip()
+            path = str(api.get("path", "")).strip()
+            if src not in mounted_router_files:
+                continue
+            if not any(path == pfx or path.startswith(pfx.rstrip("/") + "/") for pfx in mount_prefixes):
+                unresolved_paths.append(f"{api.get('method', 'GET')} {path}")
+        if unresolved_paths:
+            sample = ", ".join(sorted(unresolved_paths)[:5])
+            warnings.append(
+                "QUALITY_WARNING: Some mounted-router endpoints appear unresolved (missing mount prefix): "
+                + sample
+            )
+
+    schema_entities = [e for e in entities if str(e.get("type", "")).lower() in {"mongoose_model", "prisma_model"}]
+    missing_schema_fields = [e.get("name", "") for e in schema_entities if not isinstance(e.get("fields"), dict) or not e.get("fields")]
+    if missing_schema_fields:
+        sample = ", ".join(sorted(str(x) for x in missing_schema_fields if x)[:5])
+        warnings.append(
+            "QUALITY_WARNING: schema entities missing field definitions: " + sample
+        )
+
+    return warnings
 
 
 # ---------------------------------------------------------------------------
@@ -1398,9 +1933,10 @@ def build_repository_evidence(
     services = _build_services(paths, features_map, components, read_file)
     repositories = _build_repositories(paths, features_map, components, entities, read_file)
     routers = _build_routers(paths, features_map, read_file)
-    mounts = _build_mounts(paths, features_map)
+    mounts = _build_mounts(paths, features_map, read_file)
     frontend = _build_frontend(paths, features_map, read_file, tech_stack)
     relationships = _build_relationships(components, services, repositories, routers, entities, schema_edges, apis, features_map, read_file)
+    quality_warnings = _build_quality_warnings(apis, mounts, entities)
 
     # Restructure tech_stack for Phase 3 strict compliance
     formatted_tech_stack = {
@@ -1454,4 +1990,5 @@ def build_repository_evidence(
         "components": components,       # Kept for backwards compatibility
         "routers": routers,
         "file_evidence": features_map,
+        "quality_warnings": quality_warnings,
     }

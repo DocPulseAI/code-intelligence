@@ -18,6 +18,7 @@ def _normalize_report_for_snapshot(report: dict) -> dict:
     report_body = normalized.get("report", {})
     if isinstance(report_body, dict):
         report_body.pop("search_index", None)
+        report_body.pop("code_intelligence", None)
     return normalized
 
 

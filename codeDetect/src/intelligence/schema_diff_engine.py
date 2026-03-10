@@ -7,6 +7,9 @@ import json
 import re
 from typing import Any, Callable
 
+from src.file_filter import FileFilter
+from src.intelligence.data_model_graph import extract_mongoose_models
+
 
 _SEVERITY_ORDER = {"PATCH": 1, "MINOR": 2, "MAJOR": 3}
 _TYPE_MAP = {
@@ -58,6 +61,10 @@ def _norm_type(raw: Any) -> str:
             text = parts[0]
     if text.startswith("optional[") and text.endswith("]"):
         text = text[len("optional[") : -1].strip()
+    if text.startswith("array<") and text.endswith(">"):
+        return text
+    if "objectid" in text:
+        return "objectid"
     if text.endswith("[]") or text.startswith("list["):
         return "array"
     return _TYPE_MAP.get(text, text or "unknown")
@@ -73,6 +80,7 @@ def _normalize_field(field: Any) -> dict:
             "indexed": False,
             "enum_values": [],
             "primary_key": False,
+            "ref": "",
         }
     if not isinstance(field, dict):
         return {
@@ -83,10 +91,12 @@ def _normalize_field(field: Any) -> dict:
             "indexed": False,
             "enum_values": [],
             "primary_key": False,
+            "ref": "",
         }
     enum_values = field.get("enum_values")
     if not isinstance(enum_values, list):
         enum_values = []
+    ref = str(field.get("ref", "") or "").strip()
     return {
         "name": str(field.get("name", "")),
         "type": _norm_type(field.get("type", "unknown")),
@@ -95,6 +105,7 @@ def _normalize_field(field: Any) -> dict:
         "indexed": _to_bool(field.get("indexed", False)),
         "enum_values": sorted(str(v) for v in enum_values if str(v).strip()),
         "primary_key": _to_bool(field.get("primary_key", False)),
+        "ref": ref,
     }
 
 
@@ -303,6 +314,8 @@ def _extract_python_models(content: str) -> list[dict]:
 def extract_canonical_models(file_paths: list[str], read_file: Callable[[str], str | None]) -> list[dict]:
     models: dict[str, dict] = {}
     for path in sorted(file_paths):
+        if FileFilter.should_exclude_from_entity_analysis(path):
+            continue
         content = read_file(path) or ""
         if not content:
             continue
@@ -337,12 +350,14 @@ def extract_canonical_models(file_paths: list[str], read_file: Callable[[str], s
                     )
                 if fields:
                     extracted.append({"name": name, "fields": fields})
-        if lower.endswith((".js", ".jsx", ".ts", ".tsx")):
-            # Mongoose model fallback from existing data model patterns.
-            for mm in re.finditer(r"mongoose\.model\s*\(\s*['\"](\w+)['\"]", content):
-                name = mm.group(1)
-                if name not in models:
-                    extracted.append({"name": name, "fields": {}})
+        if lower.endswith((".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs")):
+            for model in extract_mongoose_models(content):
+                extracted.append(
+                    {
+                        "name": str(model.get("name", "")),
+                        "fields": model.get("fields", {}) if isinstance(model.get("fields"), dict) else {},
+                    }
+                )
         for item in extracted:
             entity = _normalize_entity(item)
             if entity["name"]:
@@ -470,4 +485,3 @@ def diff_schema_models(baseline_report: dict | None, current_report: dict) -> li
             str(d.get("id", "")),
         ),
     )
-

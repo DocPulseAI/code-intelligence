@@ -65,6 +65,7 @@ def main():
         from src.intelligence.architecture_reconstructor import reconstruct_architecture
         from src.intelligence.dependency_graph_engine import build_dependency_graph
         from src.intelligence.call_graph_engine import build_call_graph
+        from src.intelligence.code_intelligence_builder import build_code_intelligence
         from src.intelligence.impact_analysis_engine import build_impact_analysis
         from src.intelligence.dependency_analysis_engine import analyze_dependencies
         from src.intelligence.call_graph_analysis_engine import analyze_call_graph
@@ -246,6 +247,14 @@ def main():
             LOG.info("Analyzing call graph hierarchy...")
             call_analysis_res = analyze_call_graph(call_graph, repository_evidence)
             call_graph_analysis = call_analysis_res.get("call_graph_analysis", {})
+
+            LOG.info("Building code intelligence section...")
+            code_intelligence = build_code_intelligence(
+                repository_evidence=repository_evidence,
+                call_graph=call_graph,
+                dependency_graph=dependency_graph,
+                read_file=read_file,
+            )
             
             LOG.info("Analyzing dependencies...")
             dep_analysis_res = analyze_dependencies(dependency_graph)
@@ -289,28 +298,49 @@ def main():
                 LOG.info(f"Overriding api_surface with {len(ev_apis)} resolved endpoints from repository_evidence")
                 # Build enriched endpoint list for api_surface
                 resolved_endpoints_for_surface = []
-                health_endpoints = []
                 for a in ev_apis:
                     if a.get("method") and a.get("path"):
-                        path_str = str(a.get("path", ""))
-                        handler_str = str(a.get("handler", "")).lower()
-                        ctrl_str = str(a.get("controller", "")).lower()
-                        
-                        # FIX 1: Remove Health / Root Routes
-                        is_health = (path_str == "/") or any(k in handler_str for k in ("status", "health", "api is running")) or any(k in ctrl_str for k in ("status", "health", "api is running"))
-                        if is_health:
-                            health_endpoints.append(a)
-                            continue
-
+                        method = str(a.get("method", "GET")).upper()
+                        path = str(a.get("path", ""))
+                        normalized_key = f"{method.lower()} {path.lower()}"
+                        op_segments = [
+                            seg for seg in path.replace(":", "").replace("{", "").replace("}", "").split("/")
+                            if seg
+                        ]
+                        op_suffix = "".join(seg[:1].upper() + seg[1:] for seg in op_segments) or "Root"
+                        operation_id = f"{method.lower()}{op_suffix}"
+                        endpoint_hash = hashlib.sha256(
+                            f"v1|{method}|{path}".encode("utf-8")
+                        ).hexdigest()
                         ep = {
-                            "method": a.get("method", "GET"),
-                            "path": a.get("path", ""),
+                            "operation_id": operation_id,
+                            "method": method,
+                            "path": path,
+                            "normalized_key": normalized_key,
+                            "summary": "",
+                            "description": "",
+                            "tags": [str(a.get("module", "")).strip()] if str(a.get("module", "")).strip() else [],
+                            "auth": {
+                                "required": bool(a.get("auth_required", False)),
+                                "type": "unknown",
+                            },
+                            "request": {
+                                "path_params": [],
+                                "query_params": [],
+                                "headers": [],
+                                "body_schema": None,
+                            },
+                            "responses": [],
+                            "example": {},
                             "source": {"controller": a.get("controller", "")},
+                            "confidence": 0.8,
+                            "warnings": [],
                             "controller": a.get("controller", ""),
                             "component": a.get("module", ""),
                             "source_file": a.get("source_file", ""),
                             "router_file": a.get("router_file", ""),
                             "line": a.get("line", 0),
+                            "endpoint_hash": endpoint_hash,
                         }
                         if "auth_required" in a:
                             ep["auth_required"] = a["auth_required"]
@@ -335,6 +365,57 @@ def main():
             else:
                 highest_severity = "PATCH"
 
+            def extract_schema_relationships(models: list[dict]) -> list[dict]:
+                rels = []
+                seen = set()
+                for model in models:
+                    model_name = str(model.get("model_name", "")).strip()
+                    fields = model.get("fields", {})
+                    if not model_name or not isinstance(fields, dict):
+                        continue
+                    for fname, fmeta in fields.items():
+                        if not isinstance(fmeta, dict):
+                            continue
+                        ref = str(fmeta.get("ref", "")).strip()
+                        if not ref:
+                            continue
+                        key = (model_name, str(fname), ref)
+                        if key in seen:
+                            continue
+                        seen.add(key)
+                        rels.append(
+                            {
+                                "from": f"{model_name}.{fname}",
+                                "to": ref,
+                                "type": "references",
+                                "field": str(fname),
+                            }
+                        )
+                return sorted(rels, key=lambda r: (r.get("from", ""), r.get("to", "")))
+
+            schema_relationships = extract_schema_relationships(schema_models)
+
+            quality_warnings = list(repository_evidence.get("quality_warnings", []))
+            if len(all_endpoints) == 0:
+                quality_warnings.append("QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)")
+            if repository_evidence.get("api_mounts"):
+                non_root_mounts = [m for m in repository_evidence.get("api_mounts", []) if str(m.get("base_path", "")).strip() not in ("", "/")]
+                if non_root_mounts:
+                    unresolved = []
+                    for ep in all_endpoints:
+                        path = str(ep.get("path", "")).strip()
+                        if not any(path == m.get("base_path", "") or path.startswith(str(m.get("base_path", "")).rstrip("/") + "/") for m in non_root_mounts):
+                            src = str(ep.get("source_file", ""))
+                            if src and "/routes/" in src.replace("\\", "/"):
+                                unresolved.append(f"{ep.get('method', 'GET')} {path}")
+                    if unresolved:
+                        quality_warnings.append(
+                            "QUALITY_WARNING: endpoints missing expected mount prefixes: "
+                            + ", ".join(sorted(set(unresolved))[:5])
+                        )
+            if any(not isinstance(m.get("fields"), dict) or len(m.get("fields", {})) == 0 for m in schema_models):
+                quality_warnings.append("QUALITY_WARNING: one or more schema entities are missing field definitions")
+
             # Build current report (normalized structure for baseline comparison)
             generated_at = datetime.utcnow().isoformat() + "Z"
             current_normalized_report = {
@@ -344,6 +425,7 @@ def main():
                 "schema_analysis": {
                     "models": schema_models,
                     "models_detected": len(schema_models),
+                    "relationships": schema_relationships,
                 },
                 "architecture_reconstruction": architecture_reconstruction,
                 "dependency_graph": dependency_graph,
@@ -352,6 +434,7 @@ def main():
                 "call_graph_analysis": call_graph_analysis,
                 "impact_analysis": impact_analysis,
                 "search_index": search_index,
+                "code_intelligence": code_intelligence,
             }
 
 
@@ -475,7 +558,9 @@ def main():
                     "schema_analysis": {
                         "models": schema_models,
                         "models_detected": len(schema_models),
+                        "relationships": schema_relationships,
                     },
+                    "quality_warnings": quality_warnings,
                     "affected_packages": sorted(all_packages),
                     "database_impact": {
                         "models": database_models,
@@ -517,6 +602,7 @@ def main():
                     "call_graph_analysis": call_graph_analysis,
                     "impact_analysis": impact_analysis,
                     "search_index": search_index,
+                    "code_intelligence": code_intelligence,
                 },
             }
 
@@ -631,12 +717,19 @@ def main():
                     frm = rel.get("from")
                     to = rel.get("to")
                     
-                    if rel_type in ("EXPOSES_API", "IMPORTS_MODULE", "CALLS_SERVICE", "USES_ENTITY"):
+                    if rel_type in ("EXPOSES_API", "CALLS_SERVICE", "USES_ENTITY"):
                         if frm not in valid_nodes:
                             LOG.error(f"Validation Error: Relationship '{rel_type}' has invalid 'from' node: {frm}")
                             sys.exit(2)
                         if to not in valid_nodes:
                             LOG.error(f"Validation Error: Relationship '{rel_type}' has invalid 'to' node: {to}")
+                            sys.exit(2)
+                    elif rel_type == "IMPORTS_MODULE":
+                        if frm not in valid_nodes:
+                            LOG.error(f"Validation Error: Relationship '{rel_type}' has invalid 'from' node: {frm}")
+                            sys.exit(2)
+                        if not str(to or "").strip():
+                            LOG.error(f"Validation Error: Relationship '{rel_type}' has empty 'to' node")
                             sys.exit(2)
 
             LOG.info("Validating impact report integrity...")
@@ -683,6 +776,17 @@ def main():
                 "data_model": {"entities": [], "relationships": []},
                 "doc_contract": {},
                 "search_index": {"symbols": [], "references": [], "apis": [], "modules": []},
+                "code_intelligence": {
+                    "symbol_index": [],
+                    "call_graph": {"nodes": [], "edges": []},
+                    "dependency_graph": {
+                        "modules": [],
+                        "dependencies": [],
+                        "cycle_detected": False,
+                        "circular_dependencies": [],
+                    },
+                    "repository_graph": {"nodes": [], "edges": []},
+                },
             },
         }
         output_path = os.path.join(os.path.dirname(__file__), "impact_report.json")

@@ -878,7 +878,22 @@ class TreeSitterEngine:
                 features["decorators"].append(dec_text)
 
                 # Check for API routes
-                if any(pattern in dec_text for pattern in ['@app.route', '@router.', '@auth_bp.', '@api.']):
+                if any(
+                    pattern in dec_text
+                    for pattern in [
+                        '@app.route',
+                        '@app.get',
+                        '@app.post',
+                        '@app.put',
+                        '@app.delete',
+                        '@app.patch',
+                        '@app.options',
+                        '@app.head',
+                        '@router.',
+                        '@auth_bp.',
+                        '@api.',
+                    ]
+                ):
                     has_route = True
                     route = self._extract_decorator_route(dec_text)
                     method = self._extract_decorator_method(dec_text) # New helper to extract methods=["POST"] or @router.post

@@ -37,7 +37,11 @@ codeDetect/src/parsers/__pycache__/
 codeDetect/tests/__pycache__/
 impact_report.json
 results/
-
+/audit_runs
+/audit_repos
+/audit_outputs
 # Reports
 reports/
 *.log
+
+audit_runs/repos/
