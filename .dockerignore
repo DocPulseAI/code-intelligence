@@ -1,0 +1,26 @@
+.git
+.github
+.gitignore
+.dockerignore
+.DS_Store
+
+# Editor and local environment noise
+.vscode/
+.idea/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Runtime image does not need these repo assets
+codeDetect/tests/
+codeDetect/reports/
+codeDetect/PROJECT_STATUS.md
+codeDetect/.baseline_store/
+codeDetect/impact_report*.json
+codeDetect/analyzed_files*.txt
+codeDetect/*_route_audit.txt
