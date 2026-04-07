@@ -402,11 +402,21 @@ def analyze():
             return body, status_code
 
         request_id = request.environ.get("epic1.request_id")
+        trace_id = data.get("trace_id")
+        if trace_id is not None and not isinstance(trace_id, str):
+            return jsonify({"error": "trace_id must be a string"}), 400
+        trace_id = trace_id.strip() if isinstance(trace_id, str) and trace_id.strip() else request_id
+        run_id = data.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            return jsonify({"error": "run_id must be a string"}), 400
+        run_id = run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
         _log_event(
             logging.INFO,
             "EPIC1_ANALYZE_REQUEST",
             "Starting repository analysis request",
             request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
             repo_url=repo_url,
             branch=branch,
             project_id=project_id,
@@ -436,6 +446,8 @@ def analyze():
             "EPIC1_ANALYZE_SUBPROCESS_DONE" if result.returncode == 0 else "EPIC1_ANALYZE_SUBPROCESS_FAILED",
             "Analysis subprocess completed" if result.returncode == 0 else "Analysis subprocess failed",
             request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
             return_code=result.returncode,
             duration_ms=duration_ms,
             stderr_preview=_truncate_text(result.stderr),
@@ -481,6 +493,8 @@ def analyze():
             "EPIC1_ANALYZE_SUCCESS",
             "Repository analysis completed successfully",
             request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
             highest_severity=report.get("analysis_summary", {}).get("highest_severity"),
             files_analyzed=report.get("analysis_summary", {}).get("total_files_changed"),
         )
@@ -576,11 +590,21 @@ def analyze_local():
             return jsonify({"error": "repo_path must be a directory"}), 400
 
         request_id = request.environ.get("epic1.request_id")
+        trace_id = data.get("trace_id")
+        if trace_id is not None and not isinstance(trace_id, str):
+            return jsonify({"error": "trace_id must be a string"}), 400
+        trace_id = trace_id.strip() if isinstance(trace_id, str) and trace_id.strip() else request_id
+        run_id = data.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            return jsonify({"error": "run_id must be a string"}), 400
+        run_id = run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
         _log_event(
             logging.INFO,
             "EPIC1_LOCAL_ANALYZE_REQUEST",
             "Starting local repository analysis request",
             request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
             repo_path=repo_path,
             project_id=project_id,
             new_user=new_user,
@@ -606,6 +630,8 @@ def analyze_local():
             "EPIC1_LOCAL_ANALYZE_SUBPROCESS_DONE" if result.returncode == 0 else "EPIC1_LOCAL_ANALYZE_SUBPROCESS_FAILED",
             "Local analysis subprocess completed" if result.returncode == 0 else "Local analysis subprocess failed",
             request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
             return_code=result.returncode,
             duration_ms=duration_ms,
             stderr_preview=_truncate_text(result.stderr),
@@ -651,6 +677,8 @@ def analyze_local():
             "EPIC1_LOCAL_ANALYZE_SUCCESS",
             "Local repository analysis completed successfully",
             request_id=request_id,
+            trace_id=trace_id,
+            run_id=run_id,
             highest_severity=report.get("analysis_summary", {}).get("highest_severity"),
             files_analyzed=report.get("analysis_summary", {}).get("total_files_changed"),
         )
