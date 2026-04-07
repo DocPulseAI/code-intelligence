@@ -9,12 +9,14 @@ import tempfile
 import shutil
 import importlib.util
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify
 from flasgger import Swagger
 import subprocess
 import sys
 import logging
+import time
+from uuid import uuid4
 from typing import Optional
 
 app = Flask(__name__)
@@ -37,11 +39,51 @@ swagger = Swagger(app, config={
 REPORTS_DIR = Path('/tmp/code-detector-reports')
 REPORTS_DIR.mkdir(exist_ok=True)
 LOG = logging.getLogger("epic1.api")
-if not LOG.handlers:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(message)s"
-    )
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
+LOG_BODY_MAX_CHARS = max(200, _int_env("EPIC1_LOG_BODY_MAX_CHARS", 1200))
+
+
+def _configure_logging() -> None:
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    if root.handlers:
+        return
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    root.addHandler(handler)
+
+
+def _truncate_text(value: str | None, max_chars: int = LOG_BODY_MAX_CHARS) -> str:
+    text = (value or "").strip()
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}...(truncated)"
+
+
+def _log_event(level: int, event_id: str, message: str, **fields):
+    payload: dict[str, object] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "level": logging.getLevelName(level),
+        "service": "epic1",
+        "event_id": event_id,
+        "message": message,
+    }
+    payload.update(fields)
+    LOG.log(level, json.dumps(payload, default=str))
+
+
+_configure_logging()
 
 
 def _check_runtime_dependencies() -> dict:
@@ -80,7 +122,12 @@ def _check_runtime_dependencies() -> dict:
 
 
 DEPENDENCY_STATUS = _check_runtime_dependencies()
-LOG.info("Startup dependency check: %s", json.dumps(DEPENDENCY_STATUS))
+_log_event(
+    logging.INFO,
+    "EPIC1_DEPENDENCY_CHECK",
+    "Startup dependency check complete",
+    dependencies=DEPENDENCY_STATUS,
+)
 
 
 def _parse_boolean_field(data: dict, field_name: str, default: bool = False):
@@ -138,6 +185,43 @@ def _error_response(stage: str,
     if report:
         payload["report"] = report
     return jsonify(payload), status_code
+
+
+@app.before_request
+def _before_request_log():
+    request_id = request.headers.get("X-Request-Id") or str(uuid4())
+    request.environ["epic1.request_id"] = request_id
+    request.environ["epic1.started_at"] = time.perf_counter()
+    _log_event(
+        logging.INFO,
+        "EPIC1_HTTP_REQUEST_START",
+        "Incoming HTTP request",
+        request_id=request_id,
+        method=request.method,
+        path=request.path,
+        remote_addr=request.remote_addr,
+    )
+
+
+@app.after_request
+def _after_request_log(response):
+    request_id = request.environ.get("epic1.request_id")
+    started_at = request.environ.get("epic1.started_at")
+    duration_ms = None
+    if isinstance(started_at, (float, int)):
+        duration_ms = round((time.perf_counter() - float(started_at)) * 1000, 2)
+    response.headers["X-Request-Id"] = str(request_id or "")
+    _log_event(
+        logging.INFO,
+        "EPIC1_HTTP_REQUEST_END",
+        "Completed HTTP request",
+        request_id=request_id,
+        method=request.method,
+        path=request.path,
+        status_code=response.status_code,
+        duration_ms=duration_ms,
+    )
+    return response
 
 @app.route('/', methods=['GET', 'HEAD'])
 def root():
@@ -317,6 +401,18 @@ def analyze():
             body, status_code = error
             return body, status_code
 
+        request_id = request.environ.get("epic1.request_id")
+        _log_event(
+            logging.INFO,
+            "EPIC1_ANALYZE_REQUEST",
+            "Starting repository analysis request",
+            request_id=request_id,
+            repo_url=repo_url,
+            branch=branch,
+            project_id=project_id,
+            new_user=new_user,
+        )
+
         # Build command
         cmd = ['python', 'main.py', repo_url]
         if github_token:
@@ -326,12 +422,23 @@ def analyze():
             cmd.append('--new-user')
 
         # Run analysis with timeout
+        started_at = time.perf_counter()
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=300,
             cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        _log_event(
+            logging.INFO if result.returncode == 0 else logging.ERROR,
+            "EPIC1_ANALYZE_SUBPROCESS_DONE" if result.returncode == 0 else "EPIC1_ANALYZE_SUBPROCESS_FAILED",
+            "Analysis subprocess completed" if result.returncode == 0 else "Analysis subprocess failed",
+            request_id=request_id,
+            return_code=result.returncode,
+            duration_ms=duration_ms,
+            stderr_preview=_truncate_text(result.stderr),
         )
 
         if result.returncode != 0:
@@ -369,11 +476,32 @@ def analyze():
         }
         if project_id is not None:
             payload["project_id"] = project_id
+        _log_event(
+            logging.INFO,
+            "EPIC1_ANALYZE_SUCCESS",
+            "Repository analysis completed successfully",
+            request_id=request_id,
+            highest_severity=report.get("analysis_summary", {}).get("highest_severity"),
+            files_analyzed=report.get("analysis_summary", {}).get("total_files_changed"),
+        )
         return jsonify(payload)
 
     except subprocess.TimeoutExpired:
+        _log_event(
+            logging.ERROR,
+            "EPIC1_ANALYZE_TIMEOUT",
+            "Repository analysis timed out",
+            request_id=request.environ.get("epic1.request_id"),
+        )
         return _error_response("analysis", "Analysis timeout (> 5 minutes)", True, _load_report_from_file(), 504)
     except Exception as e:
+        _log_event(
+            logging.ERROR,
+            "EPIC1_ANALYZE_EXCEPTION",
+            "Unhandled error while analyzing repository",
+            request_id=request.environ.get("epic1.request_id"),
+            error=str(e),
+        )
         return _error_response("analysis", str(e), True, _load_report_from_file())
 
 @app.route('/analyze/local', methods=['POST'])
@@ -447,18 +575,40 @@ def analyze_local():
         if not os.path.isdir(repo_path):
             return jsonify({"error": "repo_path must be a directory"}), 400
 
+        request_id = request.environ.get("epic1.request_id")
+        _log_event(
+            logging.INFO,
+            "EPIC1_LOCAL_ANALYZE_REQUEST",
+            "Starting local repository analysis request",
+            request_id=request_id,
+            repo_path=repo_path,
+            project_id=project_id,
+            new_user=new_user,
+        )
+
         # Build command
         cmd = ['python', 'main.py', repo_path]
         if new_user:
             cmd.append('--new-user')
 
         # Run analysis
+        started_at = time.perf_counter()
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
             timeout=300,
             cwd=os.path.dirname(os.path.abspath(__file__))
+        )
+        duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        _log_event(
+            logging.INFO if result.returncode == 0 else logging.ERROR,
+            "EPIC1_LOCAL_ANALYZE_SUBPROCESS_DONE" if result.returncode == 0 else "EPIC1_LOCAL_ANALYZE_SUBPROCESS_FAILED",
+            "Local analysis subprocess completed" if result.returncode == 0 else "Local analysis subprocess failed",
+            request_id=request_id,
+            return_code=result.returncode,
+            duration_ms=duration_ms,
+            stderr_preview=_truncate_text(result.stderr),
         )
 
         if result.returncode != 0:
@@ -496,11 +646,32 @@ def analyze_local():
         }
         if project_id is not None:
             payload["project_id"] = project_id
+        _log_event(
+            logging.INFO,
+            "EPIC1_LOCAL_ANALYZE_SUCCESS",
+            "Local repository analysis completed successfully",
+            request_id=request_id,
+            highest_severity=report.get("analysis_summary", {}).get("highest_severity"),
+            files_analyzed=report.get("analysis_summary", {}).get("total_files_changed"),
+        )
         return jsonify(payload)
 
     except subprocess.TimeoutExpired:
+        _log_event(
+            logging.ERROR,
+            "EPIC1_LOCAL_ANALYZE_TIMEOUT",
+            "Local repository analysis timed out",
+            request_id=request.environ.get("epic1.request_id"),
+        )
         return _error_response("analysis", "Analysis timeout (> 5 minutes)", True, _load_report_from_file(), 504)
     except Exception as e:
+        _log_event(
+            logging.ERROR,
+            "EPIC1_LOCAL_ANALYZE_EXCEPTION",
+            "Unhandled error while analyzing local repository",
+            request_id=request.environ.get("epic1.request_id"),
+            error=str(e),
+        )
         return _error_response("analysis", str(e), True, _load_report_from_file())
 
 @app.errorhandler(404)

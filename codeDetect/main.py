@@ -21,6 +21,12 @@ if not logging.getLogger().handlers:
 _ROUTE_METHODS = {"get", "post", "put", "patch", "delete"}
 _JWT_HINTS = {"protect", "auth", "authenticate", "verifytoken", "jwt"}
 _RBAC_HINTS = {"rbac", "role", "authorize"}
+_GITHUB_TOKEN_PREFIXES = ("ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_")
+
+
+def _looks_like_github_token(value: str | None) -> bool:
+    token = str(value or "").strip()
+    return token.startswith(_GITHUB_TOKEN_PREFIXES)
 
 
 def _singularize_word(token: str) -> str:
@@ -255,13 +261,13 @@ def main():
 
     if positional_args:
         first = positional_args[0]
-        if first.startswith(("ghp_", "github_pat_")):
+        if _looks_like_github_token(first):
             github_token = first
             if len(positional_args) > 1:
                 branch = positional_args[1]
         else:
             branch = first
-            if len(positional_args) > 1 and positional_args[1].startswith(("ghp_", "github_pat_")):
+            if len(positional_args) > 1 and _looks_like_github_token(positional_args[1]):
                 github_token = positional_args[1]
 
     # Determine if it's a URL or local path
