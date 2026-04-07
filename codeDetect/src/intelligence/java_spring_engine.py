@@ -58,6 +58,11 @@ def _extract_path_variable_annotation(line: str) -> list[str]:
     for match in re.finditer(r'@PathVariable\s*(?:\(\s*["\']([\w]+)["\'])?', line):
         if match.group(1):
             params.append(match.group(1))
+    for match in re.finditer(
+        r'@PathVariable(?:\s*\([^)]*\))?\s+[\w<>,.\[\]?]+\s+([A-Za-z_]\w*)',
+        line,
+    ):
+        params.append(match.group(1))
     return params
 
 
@@ -67,6 +72,11 @@ def _extract_request_param_annotation(line: str) -> list[str]:
     for match in re.finditer(r'@RequestParam\s*(?:\(\s*["\']([\w]+)["\'])?', line):
         if match.group(1):
             params.append(match.group(1))
+    for match in re.finditer(
+        r'@RequestParam(?:\s*\([^)]*\))?\s+[\w<>,.\[\]?]+\s+([A-Za-z_]\w*)',
+        line,
+    ):
+        params.append(match.group(1))
     return params
 
 
@@ -147,6 +157,7 @@ def extract_spring_metadata(
     class_level_path = "/"
     class_level_auth = "Public"
     current_class = None
+    pending_entity = False
 
     # Extract context path from application.properties or yml if available
     if read_file:
@@ -159,6 +170,19 @@ def extract_spring_metadata(
                     break
 
     for idx, line in enumerate(lines):
+        class_decl = re.search(r"\bclass\s+([A-Za-z_]\w*)", line)
+        if class_decl:
+            current_class = class_decl.group(1)
+            if pending_entity or current_class.endswith("DTO"):
+                fields = _extract_dto_fields(content, current_class)
+                if fields or pending_entity:
+                    dtos.append({
+                        "name": current_class,
+                        "fields": fields,
+                        "is_entity": pending_entity,
+                    })
+                pending_entity = False
+
         # Class-level annotations
         is_rest_controller = "@RestController" in line or "@Controller" in line
         if is_rest_controller:
@@ -172,26 +196,8 @@ def extract_spring_metadata(
                 if "@RolesAllowed" in next_line or "@Secured" in next_line:
                     class_level_auth = "RBAC"
 
-            # Get class name
-            class_match = re.search(r"class\s+([A-Za-z_]\w*)", line)
-            if class_match:
-                current_class = class_match.group(1)
-
-        # Extract DTOs (any class with @JsonProperty or fields)
-        if current_class and ("@Entity" in line or "@JsonProperty" in line or "@Embeddable" in line):
-            for look_ahead in range(min(5, len(lines) - idx - 1)):
-                next_line = lines[idx + look_ahead]
-                class_m = re.search(r"class\s+([A-Za-z_]\w*)", next_line)
-                if class_m:
-                    dto_name = class_m.group(1)
-                    fields = _extract_dto_fields("\n".join(lines[idx:idx + 50]), dto_name)
-                    if fields or "@Entity" in line or "@JsonProperty" in line:
-                        dtos.append({
-                            "name": dto_name,
-                            "fields": fields,
-                            "is_entity": "@Entity" in line or "@Embeddable" in line,
-                        })
-                    break
+        if "@Entity" in line or "@Embeddable" in line:
+            pending_entity = True
 
         # Method-level routes
         method_match = re.search(
@@ -204,15 +210,33 @@ def extract_spring_metadata(
 
             if annotation == "RequestMapping":
                 method_m = re.search(r"method\s*=\s*RequestMethod\.(\w+)", args)
-                method = method_m.group(1) if method_m else "GET"
+                if not method_m:
+                    continue
+                method = method_m.group(1)
             else:
                 method = annotation.replace("Mapping", "").upper()
 
             path = _norm_path(_extract_annotation_value(line))
             full_path = _norm_path(f"{context_path}{class_level_path}{path}")
 
-            auth_type = _extract_auth_type(lines, idx)
-            if auth_type == "Public":
+            has_jwt = False
+            has_rbac = False
+            for auth_idx in range(idx, min(idx + 5, len(lines))):
+                auth_line = lines[auth_idx]
+                if "@PreAuthorize" in auth_line:
+                    has_jwt = True
+                if "@RolesAllowed" in auth_line or "@Secured" in auth_line:
+                    has_rbac = True
+                if auth_line.strip().startswith(("public", "private", "protected")):
+                    break
+
+            if has_jwt and has_rbac:
+                auth_type = "JWT+RBAC"
+            elif has_jwt:
+                auth_type = "JWT"
+            elif has_rbac:
+                auth_type = "RBAC"
+            else:
                 auth_type = class_level_auth
 
             # Collect parameters from next few lines
@@ -221,14 +245,17 @@ def extract_spring_metadata(
             has_body = False
             for param_idx in range(idx + 1, min(idx + 10, len(lines))):
                 param_line = lines[param_idx]
-                if param_line.strip().startswith("public") or param_line.strip().startswith("private"):
-                    # Method signature line
-                    path_params.extend(_extract_path_variable_annotation(param_line))
-                    query_params.extend(_extract_request_param_annotation(param_line))
-                    has_body = _extract_request_body_annotation(param_line)
-                if "{" in param_line and "@" not in param_line:
+                path_params.extend(_extract_path_variable_annotation(param_line))
+                query_params.extend(_extract_request_param_annotation(param_line))
+                has_body = has_body or _extract_request_body_annotation(param_line)
+                if "{" in param_line and not param_line.strip().startswith("@"):
                     # Reached method body
                     break
+
+            path_params = sorted(set(path_params))
+            query_params = sorted(set(query_params))
+            if not path_params:
+                path_params = sorted(set(re.findall(r"\{([A-Za-z_]\w*)\}", full_path)))
 
             routes.append({
                 "method": method,

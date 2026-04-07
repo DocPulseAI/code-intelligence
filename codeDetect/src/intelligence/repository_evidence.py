@@ -933,7 +933,7 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
                     continue
                 schema_edges.append({
                     "type": "entity_relation",
-                    "from": f"{model_name}.{field_name}",
+                    "from": model_name,
                     "to": ref_model,
                     "relation": "references",
                     "field": field_name,
@@ -1923,6 +1923,7 @@ def build_repository_evidence(
     features_map: dict[str, dict],
     schema_tags_map: dict[str, list[str]],
     tech_stack: dict,
+    include_extended: bool = False,
 ) -> dict[str, Any]:
     """Build the deterministic repository evidence graph."""
     paths = sorted(str(p) for p in file_paths if str(p).strip())
@@ -1974,7 +1975,7 @@ def build_repository_evidence(
     api_mounts = [dict(t) for t in {tuple(d.items()) for d in api_mounts}]
     api_mounts = sorted(api_mounts, key=lambda m: (m.get("base_path", ""), m.get("router", "")))
 
-    return {
+    result = {
         # Primary evidence keys
         "tech_stack": formatted_tech_stack,
         "modules": components,          # User-facing alias: same as components
@@ -1982,13 +1983,15 @@ def build_repository_evidence(
         "entities": entities,
         "services": services,
         "repositories": repositories,
-        "api_mounts": api_mounts,       # Added for EPIC-1 Stabilization
         "mounts": mounts,
         "relationships": relationships,
         "frontend_routes": frontend.get("frontend_routes", []),
         # Additional detail
         "components": components,       # Kept for backwards compatibility
         "routers": routers,
-        "file_evidence": features_map,
-        "quality_warnings": quality_warnings,
     }
+    if include_extended:
+        result["api_mounts"] = api_mounts
+        result["file_evidence"] = features_map
+        result["quality_warnings"] = quality_warnings
+    return result

@@ -200,6 +200,9 @@ class FileFilter:
 
         normalized = file_path.replace('\\', '/').lower()
         parts = [p for p in normalized.split('/') if p]
+        ext = os.path.splitext(normalized)[1]
+        if ext in {'.sql', '.prisma'}:
+            return False
         # Entity extraction only from source roots (or root entry files for small repos).
         in_source_root = any(part in FileFilter.SOURCE_ROOT_DIRS for part in parts[:-1])
         is_entry = os.path.basename(normalized) in FileFilter.SOURCE_ENTRY_FILES

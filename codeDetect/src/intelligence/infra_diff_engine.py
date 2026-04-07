@@ -51,6 +51,7 @@ _CI_SEVERITY = {
     "PERMISSION_CHANGED": "MAJOR",
     "ENV_VAR_ADDED": "PATCH",
     "ENV_VAR_REMOVED": "PATCH",
+    "ENV_VAR_CHANGED": "PATCH",
     "TIMEOUT_CHANGED": "PATCH",
     "CONCURRENCY_CHANGED": "PATCH",
 }
@@ -295,18 +296,24 @@ def extract_docker_changes(
                 "id": _stable_id({"type": "INFRA_CHANGE", "category": "docker", "change": "ENTRYPOINT_CHANGED"}),
             })
 
-    # CMD change
-    if baseline_config.get("cmd") != current_config.get("cmd"):
-        if baseline_config.get("cmd") or current_config.get("cmd"):
-            changes.append({
-                "type": "INFRA_CHANGE",
-                "category": "docker",
-                "change": "CMD_CHANGED",
-                "description": f"Docker CMD changed",
-                "severity": _DOCKER_SEVERITY.get("CMD_CHANGED", "MINOR"),
-                "classification_basis": "INFRA_DIFF",
-                "id": _stable_id({"type": "INFRA_CHANGE", "category": "docker", "change": "CMD_CHANGED"}),
-            })
+    # CMD change (explicit or effective startup command change with ENTRYPOINT)
+    cmd_changed = baseline_config.get("cmd") != current_config.get("cmd")
+    if (
+        not cmd_changed
+        and baseline_config.get("entrypoint") != current_config.get("entrypoint")
+        and (baseline_config.get("cmd") or current_config.get("cmd"))
+    ):
+        cmd_changed = True
+    if cmd_changed and (baseline_config.get("cmd") or current_config.get("cmd")):
+        changes.append({
+            "type": "INFRA_CHANGE",
+            "category": "docker",
+            "change": "CMD_CHANGED",
+            "description": "Docker CMD changed",
+            "severity": _DOCKER_SEVERITY.get("CMD_CHANGED", "MINOR"),
+            "classification_basis": "INFRA_DIFF",
+            "id": _stable_id({"type": "INFRA_CHANGE", "category": "docker", "change": "CMD_CHANGED"}),
+        })
 
     # Volumes
     baseline_volumes = set(baseline_config.get("volumes", []))
@@ -444,6 +451,16 @@ def extract_github_actions_changes(
                 "classification_basis": "INFRA_DIFF",
                 "id": _stable_id({"type": "INFRA_CHANGE", "category": "ci", "change": "ENV_VAR_ADDED", "key": key}),
             })
+        elif baseline_env.get(key) != current_env.get(key):
+            changes.append({
+                "type": "INFRA_CHANGE",
+                "category": "ci",
+                "change": "ENV_VAR_CHANGED",
+                "description": f"CI environment variable changed: {key}",
+                "severity": _CI_SEVERITY.get("ENV_VAR_ADDED", "PATCH"),
+                "classification_basis": "INFRA_DIFF",
+                "id": _stable_id({"type": "INFRA_CHANGE", "category": "ci", "change": "ENV_VAR_CHANGED", "key": key}),
+            })
 
     for key in baseline_env:
         if key not in current_env:
@@ -499,10 +516,17 @@ def compute_infra_risk_level(docker_changes: list[dict], ci_changes: list[dict])
     # Count by severity
     major_count = sum(1 for c in all_changes if c.get("severity") == "MAJOR")
     minor_count = sum(1 for c in all_changes if c.get("severity") == "MINOR")
+    patch_count = sum(1 for c in all_changes if c.get("severity") == "PATCH")
 
     # Risk assessment logic
     if major_count >= 2 or (major_count >= 1 and any(c.get("change") in {"USER_CHANGED", "ENTRYPOINT_CHANGED", "BASE_IMAGE_CHANGED", "JOB_REMOVED"} for c in all_changes)):
         return "HIGH"
-    if major_count >= 1 or minor_count >= 3:
+    if major_count >= 1:
+        return "MEDIUM"
+    if minor_count >= 2:
+        return "MEDIUM"
+    if minor_count >= 1 and patch_count >= 2:
+        return "MEDIUM"
+    if patch_count >= 4:
         return "MEDIUM"
     return "LOW"

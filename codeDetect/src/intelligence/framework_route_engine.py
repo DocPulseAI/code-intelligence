@@ -103,10 +103,24 @@ def resolve_with_framework_adapters(
 
     all_routes: list[ResolvedRoute] = []
     coverage_metrics = {}  # Preserve coverage metrics from first framework
+    passthrough_candidates: list[dict] = []
 
     for name in frameworks:
         adapter = _build_adapter(name, express_resolver)
         extracted = adapter.extract_candidates(candidates, file_paths, read_file, tech_stack or {})
+        # Backward compatibility: preserve caller-supplied candidates for non-Express
+        # frameworks when adapter extraction yields no static matches.
+        if not extracted and candidates and name in {"fastapi", "spring"}:
+            passthrough_candidates = sorted(
+                [dict(c) for c in candidates],
+                key=lambda c: (
+                    str(c.get("method", "")).upper(),
+                    str(c.get("path", "")),
+                    str(c.get("source_file", "")),
+                    int(c.get("line_start", 0) or 0),
+                ),
+            )
+            continue
         resolved = adapter.resolve_mounts(extracted, file_paths, read_file, tech_stack or {})
         if resolved.get("validation_status") == "FAILED":
             return resolved
@@ -117,6 +131,12 @@ def resolve_with_framework_adapters(
 
         reachable = adapter.filter_reachable(list(resolved.get("candidates", [])), file_paths, read_file, tech_stack or {})
         all_routes.extend(adapter.build_resolved_routes(reachable))
+
+    if not all_routes and passthrough_candidates:
+        result = {"validation_status": "OK", "candidates": passthrough_candidates}
+        if coverage_metrics:
+            result["coverage_metrics"] = coverage_metrics
+        return result
 
     ordered_routes = sorted(
         all_routes,
@@ -138,4 +158,3 @@ def resolve_with_framework_adapters(
         result["coverage_metrics"] = coverage_metrics
 
     return result
-

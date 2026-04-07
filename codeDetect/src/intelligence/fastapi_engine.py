@@ -42,10 +42,10 @@ def _extract_string_value(text: str, key: str = "prefix") -> str:
 
 
 def _extract_pydantic_model_fields(content: str, class_name: str) -> list[dict]:
-    """Extract fields from Pydantic BaseModel class definition."""
+    """Extract typed fields from a Python class definition."""
     fields = []
     # Match class definition
-    pattern = rf"class\s+{re.escape(class_name)}\s*\([^)]*BaseModel[^)]*\)\s*:"
+    pattern = rf"class\s+{re.escape(class_name)}\s*(?:\([^)]*\))?\s*:"
     m = re.search(pattern, content)
     if not m:
         return []
@@ -170,6 +170,48 @@ def extract_fastapi_metadata(
         if not changed:
             break
 
+    # Build dependency auth map from function signatures (Depends chains).
+    fn_deps: dict[str, list[str]] = {}
+    fn_auth: dict[str, str] = {}
+    for line in lines:
+        fn_match = re.search(r"(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(([^)]*)\)", line)
+        if not fn_match:
+            continue
+        fn_name = fn_match.group(1)
+        signature = fn_match.group(2)
+        deps = re.findall(r"Depends\s*\(\s*([A-Za-z_]\w*)", signature)
+        fn_deps[fn_name] = deps
+        auth_tokens = []
+        for dep in deps:
+            lower_dep = dep.lower()
+            if any(tok in lower_dep for tok in ("oauth", "token", "auth", "current_user")):
+                auth_tokens.append("JWT")
+            if any(tok in lower_dep for tok in ("admin", "role", "permission", "scope")):
+                auth_tokens.append("RBAC")
+        if "JWT" in auth_tokens and "RBAC" in auth_tokens:
+            fn_auth[fn_name] = "JWT+RBAC"
+        elif "JWT" in auth_tokens:
+            fn_auth[fn_name] = "JWT"
+        elif "RBAC" in auth_tokens:
+            fn_auth[fn_name] = "RBAC"
+
+    for _ in range(5):
+        changed = False
+        for fn_name, deps in fn_deps.items():
+            dep_types = {fn_auth.get(dep) for dep in deps if fn_auth.get(dep)}
+            next_auth = fn_auth.get(fn_name, "Public")
+            if "JWT+RBAC" in dep_types or ("JWT" in dep_types and "RBAC" in dep_types):
+                next_auth = "JWT+RBAC"
+            elif "JWT" in dep_types:
+                next_auth = "JWT"
+            elif "RBAC" in dep_types:
+                next_auth = "RBAC"
+            if fn_auth.get(fn_name) != next_auth and next_auth != "Public":
+                fn_auth[fn_name] = next_auth
+                changed = True
+        if not changed:
+            break
+
     # Phase 3: Extract routes with resolved prefixes
     for idx, line in enumerate(lines):
         route_match = re.search(
@@ -189,9 +231,29 @@ def extract_fastapi_metadata(
 
                 # Extract auth type from decorator or next few lines
                 auth_type = "Public"
+                decorator_dep_tokens = re.findall(r"Depends\s*\(\s*([A-Za-z_]\w*)", line)
+                if decorator_dep_tokens:
+                    dep_types = {fn_auth.get(dep) for dep in decorator_dep_tokens if fn_auth.get(dep)}
+                    if "JWT+RBAC" in dep_types or ("JWT" in dep_types and "RBAC" in dep_types):
+                        auth_type = "JWT+RBAC"
+                    elif "JWT" in dep_types:
+                        auth_type = "JWT"
+                    elif "RBAC" in dep_types:
+                        auth_type = "RBAC"
                 for check_idx in range(idx, min(idx + 5, len(lines))):
                     check_line = lines[check_idx]
                     if "Depends" in check_line:
+                        dep_tokens = re.findall(r"Depends\s*\(\s*([A-Za-z_]\w*)", check_line)
+                        dep_types = {fn_auth.get(dep) for dep in dep_tokens if fn_auth.get(dep)}
+                        if "JWT+RBAC" in dep_types or ("JWT" in dep_types and "RBAC" in dep_types):
+                            auth_type = "JWT+RBAC"
+                            break
+                        if "JWT" in dep_types:
+                            auth_type = "JWT"
+                            break
+                        if "RBAC" in dep_types:
+                            auth_type = "RBAC"
+                            break
                         auth_type = _extract_auth_type_from_depends(check_line)
                         break
 
@@ -204,19 +266,83 @@ def extract_fastapi_metadata(
                     "raw_path": route_path,
                 })
 
-    # Phase 4: Extract Pydantic models
-    for idx, line in enumerate(lines):
-        model_match = re.search(r"class\s+([A-Za-z_]\w*)\s*\([^)]*BaseModel[^)]*\)\s*:", line)
-        if model_match:
-            model_name = model_match.group(1)
-            fields = _extract_pydantic_model_fields("\n".join(lines[idx:]), model_name)
-            if fields or "BaseModel" in line:
-                models.append({
-                    "name": model_name,
-                    "fields": fields,
-                    "is_request": "Request" in model_name or "Input" in model_name,
-                    "is_response": "Response" in model_name or "Output" in model_name,
-                })
+    # Phase 4: Extract Pydantic models (BaseModel and subclasses).
+    class_defs: dict[str, list[str]] = {}
+    class_order: list[str] = []
+    class_re = re.compile(r"class\s+([A-Za-z_]\w*)\s*\(([^)]*)\)\s*:")
+    for line in lines:
+        match = class_re.search(line)
+        if not match:
+            continue
+        name = match.group(1)
+        bases = [b.strip() for b in match.group(2).split(",") if b.strip()]
+        class_defs[name] = bases
+        class_order.append(name)
+
+    model_names: set[str] = set()
+    for _ in range(len(class_defs) + 1):
+        changed = False
+        for name in class_order:
+            bases = class_defs.get(name, [])
+            if any(base.endswith("BaseModel") or base == "BaseModel" for base in bases):
+                if name not in model_names:
+                    model_names.add(name)
+                    changed = True
+                continue
+            if any(base in model_names for base in bases):
+                if name not in model_names:
+                    model_names.add(name)
+                    changed = True
+        if not changed:
+            break
+
+    merged_fields_cache: dict[str, list[dict]] = {}
+
+    def _collect_model_fields(name: str, visiting: set[str] | None = None) -> list[dict]:
+        if name in merged_fields_cache:
+            return merged_fields_cache[name]
+        active = visiting or set()
+        if name in active:
+            return []
+        active.add(name)
+        field_map: dict[str, dict] = {}
+        field_order: list[str] = []
+
+        for base in class_defs.get(name, []):
+            if base not in model_names or base == name:
+                continue
+            for inherited in _collect_model_fields(base, active):
+                field_name = str(inherited.get("name", "")).strip()
+                if not field_name or field_name in field_map:
+                    continue
+                field_map[field_name] = dict(inherited)
+                field_order.append(field_name)
+
+        for own in _extract_pydantic_model_fields(content, name):
+            field_name = str(own.get("name", "")).strip()
+            if not field_name:
+                continue
+            if field_name in field_map:
+                field_map[field_name].update(own)
+            else:
+                field_map[field_name] = dict(own)
+                field_order.append(field_name)
+
+        active.remove(name)
+        merged = [field_map[n] for n in field_order]
+        merged_fields_cache[name] = merged
+        return merged
+
+    for model_name in class_order:
+        if model_name not in model_names:
+            continue
+        fields = _collect_model_fields(model_name, set())
+        models.append({
+            "name": model_name,
+            "fields": fields,
+            "is_request": "Request" in model_name or "Input" in model_name or "Create" in model_name,
+            "is_response": "Response" in model_name or "Output" in model_name,
+        })
 
     return {
         "routes": routes,

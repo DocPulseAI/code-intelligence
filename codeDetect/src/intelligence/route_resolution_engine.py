@@ -567,19 +567,19 @@ def _classify_auth_inherited(
     # JWT keyword patterns (industry standard auth tokens)
     jwt_indicators = {
         "jwt", "bearer", "passport", "token", "tokenverify",
-        "jwtverify", "verifyjwt", "authenticate", "authtoken",
+        "jwtverify", "verifyjwt", "verify", "authenticate", "authtoken",
         "tokenauth", "jwtauth", "authorizationbearer"
     }
 
     # RBAC keyword patterns (role-based access control)
     rbac_indicators = {
         "rbac", "authorize", "authorization", "admin", "adminonly",
-        "role", "permission", "acl", "access", "checkpermission",
+        "role", "permission", "acl", "access", "require", "check", "checkpermission",
         "checkauthorization", "requirerole"
     }
 
     # Session keyword patterns
-    session_indicators = {"session", "sessionauth", "sessionverify"}
+    session_indicators = {"session", "sess", "sessionauth", "sessionverify"}
 
     # Deterministic keyword matching (no substring, whole word)
     has_jwt = any(kw in combined for kw in jwt_indicators)

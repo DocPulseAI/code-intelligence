@@ -7,8 +7,8 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -16,6 +16,214 @@ from typing import Callable
 LOG = logging.getLogger("epic1.cli")
 if not logging.getLogger().handlers:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+
+_ROUTE_METHODS = {"get", "post", "put", "patch", "delete"}
+_JWT_HINTS = {"protect", "auth", "authenticate", "verifytoken", "jwt"}
+_RBAC_HINTS = {"rbac", "role", "authorize"}
+
+
+def _singularize_word(token: str) -> str:
+    t = (token or "").lower()
+    if t.endswith("ies") and len(t) > 3:
+        return t[:-3] + "y"
+    if t.endswith(("sses", "xes", "zes", "ches", "shes")) and len(t) > 3:
+        return t[:-2]
+    if t.endswith("s") and len(t) > 1 and not t.endswith("ss"):
+        return t[:-1]
+    return t
+
+
+def _pluralize_word(token: str) -> str:
+    t = (token or "").lower()
+    if t.endswith("ies") and len(t) > 3:
+        return t
+    if t.endswith(("sses", "xes", "zes", "ches", "shes")):
+        return t
+    if t.endswith("s") and not t.endswith("ss"):
+        return t
+    if t.endswith("y") and len(t) > 1 and t[-2] not in "aeiou":
+        return t[:-1] + "ies"
+    if t.endswith(("s", "x", "z", "ch", "sh")):
+        return t + "es"
+    return t + "s"
+
+
+def _normalize_openapi_path(path: str) -> str:
+    segments = []
+    for seg in str(path or "").split("/"):
+        if not seg:
+            continue
+        segments.append(f"{{{seg[1:]}}}" if seg.startswith(":") else seg)
+    return "/" + "/".join(segments)
+
+
+def _extract_route_middlewares(content: str, method: str, raw_path: str) -> list[str]:
+    # Parse line-oriented Express route declarations and return middleware identifiers.
+    normalized_candidate = _normalize_openapi_path(raw_path)
+    route_call_re = re.compile(rf"\.{method.lower()}\s*\((.+)\)")
+    for line in (content or "").splitlines():
+        s = line.strip()
+        if f".{method.lower()}(" not in s:
+            continue
+        match = route_call_re.search(s)
+        if not match:
+            continue
+        args_blob = match.group(1)
+        args = [a.strip() for a in args_blob.split(",") if a.strip()]
+        if not args:
+            continue
+        route_arg = args[0].strip().strip("\"'")
+        if route_arg:
+            normalized_route = _normalize_openapi_path(route_arg)
+            # Match either exact normalized path or suffix path when candidate already has mount prefix.
+            if normalized_route != normalized_candidate and not normalized_candidate.endswith(normalized_route):
+                continue
+        # First arg is route path and last arg is handler when middleware exists.
+        if len(args) <= 2:
+            return []
+        middle = args[1:-1]
+        tokens: list[str] = []
+        for item in middle:
+            token = item.split(".")[0].strip()
+            token = token.replace("(", "").replace(")", "")
+            if token:
+                tokens.append(token)
+        return tokens
+    return []
+
+
+def _detect_auth(middleware: list[str]) -> dict:
+    lowered = [m.lower() for m in middleware]
+
+    def _token_parts(token: str) -> set[str]:
+        parts = re.split(r"[^a-z0-9]+", token)
+        # Split camelCase deterministically into lowercase words.
+        camel_parts = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z]|$)|\d+", token)
+        return {p.lower() for p in parts + camel_parts if p}
+
+    token_parts = [_token_parts(m) for m in lowered]
+    has_jwt = any(any(h in parts for h in _JWT_HINTS) for parts in token_parts)
+    has_rbac = any(any(h in parts for h in _RBAC_HINTS) for parts in token_parts)
+
+    if has_jwt and has_rbac:
+        auth_type = "JWT+RBAC"
+    elif has_jwt:
+        auth_type = "JWT"
+    elif has_rbac:
+        auth_type = "RBAC"
+    else:
+        auth_type = "Public"
+
+    filtered = []
+    for m, parts in zip(middleware, token_parts):
+        if any(h in parts for h in _JWT_HINTS) or any(h in parts for h in _RBAC_HINTS):
+            filtered.append(m)
+
+    return {
+        "required": auth_type != "Public",
+        "type": auth_type,
+        "middleware": filtered,
+    }
+
+
+def _build_operation_id(method: str, openapi_path: str) -> str:
+    method = method.upper()
+    segs = [s for s in openapi_path.strip("/").split("/") if s and s not in {"api", "v1", "v2", "v3"}]
+    has_id = any(s.startswith("{") and s.endswith("}") for s in segs)
+    nouns = [s for s in segs if not (s.startswith("{") and s.endswith("}"))]
+    noun_parts = [_singularize_word(s) for s in nouns] or ["resource"]
+
+    if method == "GET" and not has_id:
+        verb = "get"
+        noun_parts[-1] = _pluralize_word(noun_parts[-1])
+    elif method == "POST":
+        verb = "create"
+    elif method == "DELETE":
+        verb = "delete"
+    elif method == "PATCH":
+        verb = "update"
+    elif method == "PUT":
+        verb = "replace"
+    else:
+        verb = method.lower()
+
+    parts: list[str] = [verb]
+    for seg in noun_parts:
+        parts.append(seg[:1].upper() + seg[1:])
+    if has_id and openapi_path.rstrip("/").endswith("}"):
+        parts.extend(["By", "Id"])
+    return "".join(parts)
+
+
+def _build_summary(method: str, openapi_path: str) -> str:
+    segs = [s for s in openapi_path.strip("/").split("/") if s and s not in {"api", "v1", "v2", "v3"}]
+    has_id = any(s.startswith("{") and s.endswith("}") for s in segs)
+    nouns = [s for s in segs if not (s.startswith("{") and s.endswith("}"))]
+    if method.upper() == "PATCH" and nouns:
+        resource = nouns[0]
+    else:
+        resource = nouns[-1] if nouns else "resource"
+    singular = _singularize_word(resource)
+    plural = _pluralize_word(singular)
+    singular_title = singular[:1].upper() + singular[1:]
+    plural_title = plural[:1].upper() + plural[1:]
+
+    method = method.upper()
+    if method == "GET" and not has_id:
+        return f"List {plural_title}"
+    if method == "POST":
+        return f"Create {singular_title}"
+    if method == "DELETE" and has_id:
+        return f"Delete {singular_title} By Id"
+    if method == "PATCH":
+        suffix_parts = nouns[1:] if nouns else []
+        suffix = " ".join(seg[:1].upper() + seg[1:] for seg in suffix_parts)
+        if suffix:
+            return f"Update {singular_title} {suffix}".strip()
+        return f"Update {singular_title}"
+    return f"{method.title()} {singular_title}"
+
+
+def _stable_generated_at(metadata: dict, commit_sha: str) -> str:
+    ts = str((metadata or {}).get("intent", {}).get("timestamp") or "").strip()
+    if ts:
+        return ts
+    if commit_sha and commit_sha != "error":
+        return f"commit:{commit_sha}"
+    return "1970-01-01T00:00:00Z"
+
+
+def _build_api_contract_endpoints(candidates: list[dict]) -> tuple[list[dict], list[str]]:
+    """Compatibility helper retained for hardening tests.
+
+    Accepts parsed route candidates and returns OpenAPI-normalized endpoints and warnings.
+    """
+    endpoints: list[dict] = []
+    warnings: list[str] = []
+
+    for c in candidates or []:
+        method = str(c.get("method", "GET")).upper()
+        raw_path = str(c.get("path", ""))
+        if method.lower() not in _ROUTE_METHODS or not raw_path:
+            continue
+        openapi_path = _normalize_openapi_path(raw_path)
+        middleware = _extract_route_middlewares(c.get("content", ""), method, raw_path)
+        auth = _detect_auth(middleware)
+        endpoint = {
+            "method": method,
+            "path": openapi_path,
+            "source_file": c.get("source_file"),
+            "line_start": c.get("line_start"),
+            "line_end": c.get("line_end"),
+            "operation_id": _build_operation_id(method, openapi_path),
+            "summary": _build_summary(method, openapi_path),
+            "auth": auth,
+        }
+        endpoints.append(endpoint)
+
+    endpoints.sort(key=lambda ep: (ep.get("method", ""), ep.get("path", "")))
+    return endpoints, warnings
 
 
 def main():
@@ -32,14 +240,29 @@ def main():
     new_user = False
 
     # Parse optional arguments
-    for i, arg in enumerate(args[1:]):
-        if arg == "--new-user":
+    positional_args: list[str] = []
+    for arg in args[1:]:
+        low = arg.lower()
+        if low in {"--new-user", "--new-user=true", "--new-user=1", "--new-user=yes", "--new-user=y", "--new-user=on"}:
             new_user = True
-        elif "--" not in arg:
-            if i == 0 and arg.startswith(("ghp_", "github_pat_")):
-                github_token = arg
-            elif i == 1 or (i == 0 and not arg.startswith(("ghp_", "github_pat_"))):
-                branch = arg
+            continue
+        if low in {"--new-user=false", "--new-user=0", "--new-user=no", "--new-user=n", "--new-user=off"}:
+            new_user = False
+            continue
+        if arg.startswith("--"):
+            continue
+        positional_args.append(arg)
+
+    if positional_args:
+        first = positional_args[0]
+        if first.startswith(("ghp_", "github_pat_")):
+            github_token = first
+            if len(positional_args) > 1:
+                branch = positional_args[1]
+        else:
+            branch = first
+            if len(positional_args) > 1 and positional_args[1].startswith(("ghp_", "github_pat_")):
+                github_token = positional_args[1]
 
     # Determine if it's a URL or local path
     is_url = repo_input.startswith(("http://", "https://", "git@"))
@@ -231,7 +454,7 @@ def main():
             # Build repository evidence graph
             LOG.info("Building repository evidence...")
             repository_evidence = build_repository_evidence(
-                all_file_paths, read_file, file_features, file_schema_tags, tech_stack
+                all_file_paths, read_file, file_features, file_schema_tags, tech_stack, include_extended=True
             )
 
             LOG.info("Reconstructing architecture...")
@@ -240,10 +463,10 @@ def main():
 
             LOG.info("Building dependency graph...")
             dependency_graph = build_dependency_graph(repository_evidence, changes)
-            
+
             LOG.info("Building call graph...")
             call_graph = build_call_graph(repository_evidence)
-            
+
             LOG.info("Analyzing call graph hierarchy...")
             call_analysis_res = analyze_call_graph(call_graph, repository_evidence)
             call_graph_analysis = call_analysis_res.get("call_graph_analysis", {})
@@ -255,7 +478,7 @@ def main():
                 dependency_graph=dependency_graph,
                 read_file=read_file,
             )
-            
+
             LOG.info("Analyzing dependencies...")
             dep_analysis_res = analyze_dependencies(dependency_graph)
             dependency_analysis = dep_analysis_res.get("dependency_analysis", {})
@@ -275,7 +498,7 @@ def main():
                 "search_index",
                 {"symbols": [], "references": [], "apis": [], "modules": []},
             )
-            
+
             LOG.info("Generating deep repository intelligence reasoning...")
             repo_intel = analyze_repository_intelligence(
                 ev_apis_dict if 'ev_apis_dict' in locals() else {"endpoints": repository_evidence.get('apis', [])},
@@ -417,7 +640,7 @@ def main():
                 quality_warnings.append("QUALITY_WARNING: one or more schema entities are missing field definitions")
 
             # Build current report (normalized structure for baseline comparison)
-            generated_at = datetime.utcnow().isoformat() + "Z"
+            generated_at = _stable_generated_at(metadata, commit_sha)
             current_normalized_report = {
                 "api_surface": api_surface,
                 "api_contract": {"endpoints": all_endpoints[:200]},
@@ -443,10 +666,26 @@ def main():
             baseline_report = None
             baseline_commit = None
             breaking_changes = []
+            baseline_required = bool(os.environ.get("CODE_DETECT_BASELINE_DIR")) and not new_user
 
             if not new_user:
                 LOG.info("Loading baseline...")
                 baseline_report = baseline_store.load_baseline(project_id, branch, commit_sha)
+                if baseline_required and not baseline_report:
+                    print(
+                        json.dumps(
+                            {
+                                "error": "Analysis failed",
+                                "stage": "analysis",
+                                "details": "Baseline commit required for breaking change detection",
+                                "retry_possible": False,
+                                "report": {},
+                            },
+                            ensure_ascii=True,
+                            separators=(",", ":"),
+                        )
+                    )
+                    sys.exit(1)
                 if baseline_report:
                     baseline_commit = baseline_report.get("commit_sha")
                     LOG.info(f"Comparing against baseline commit: {baseline_commit}")
@@ -618,31 +857,31 @@ def main():
                 """Strict structural validation of the impact report. Aborts on failure."""
                 r = report.get("report", {})
                 ev = r.get("repository_evidence", {})
-                
+
                 # 1. No undefined components (modules)
                 components = {c["name"] for c in ev.get("modules", []) if "name" in c}
-                
+
                 # 2. Duplicate Endpoints Validation + APIs belong to components
                 seen_endpoints = set()
                 for api in ev.get("apis", []):
                     method = api.get("method", "").upper()
                     path = api.get("path", "")
                     key = f"{method} {path}"
-                    
+
                     if key in seen_endpoints:
                         LOG.error(f"Validation Error: Duplicate endpoint found - {key}")
                         sys.exit(2)
                     seen_endpoints.add(key)
-                    
+
                     if not api.get("controller"):
                         LOG.error(f"Validation Error: API endpoint {key} missing controller reference")
                         sys.exit(2)
-                        
+
                     comp = api.get("module")
                     if not comp or comp not in components:
                         LOG.error(f"Validation Error: API endpoint {key} references unknown or empty module '{comp}'")
                         sys.exit(2)
-                        
+
                 for api in r.get("api_surface", []):
                     method = api.get("method", "").upper()
                     path = api.get("path", "")
@@ -660,13 +899,13 @@ def main():
                         if bool(ep.get("auth_required")) != api_surface_auth[key]:
                             LOG.error(f"Validation Error: Auth desync on {key}")
                             sys.exit(2)
-                
+
                 # Validation 2: Component field presence & API structure
                 for ep in r.get("api_contract", {}).get("endpoints", []):
                     method = ep.get('method')
                     path = ep.get('path')
                     key = f"{str(method).upper()} {path}"
-                    
+
                     if not method:
                         LOG.error("Validation Error: API endpoint missing method")
                         sys.exit(2)
@@ -679,7 +918,7 @@ def main():
                     if not ep.get("component"):
                         LOG.error(f"Validation Error: Component field is empty for {key}")
                         sys.exit(2)
-                
+
                 # Validation 3: Dependency classification accuracy
                 deps_class = r.get("dependency_classification", {})
                 for pkg in deps_class.get("internal_modules", []):
@@ -710,13 +949,13 @@ def main():
                 for svc in ev.get("services", []):
                     if "name" in svc:
                         valid_nodes.add(svc["name"])
-                        
+
                 for rel in ev.get("relationships", []):
                     # For EXPOSES_API, 'to' is 'METHOD /path'
                     rel_type = rel.get("type", "")
                     frm = rel.get("from")
                     to = rel.get("to")
-                    
+
                     if rel_type in ("EXPOSES_API", "CALLS_SERVICE", "USES_ENTITY"):
                         if frm not in valid_nodes:
                             LOG.error(f"Validation Error: Relationship '{rel_type}' has invalid 'from' node: {frm}")
@@ -754,7 +993,7 @@ def main():
             "version": "1.0.0",
             "status": "error",
             "error": str(e),
-            "meta": {"tool_version": "1.0.0", "generated_at": datetime.utcnow().isoformat() + "Z"},
+            "meta": {"tool_version": "1.0.0", "generated_at": _stable_generated_at({}, "error")},
             "project_id": repo_input.split("/")[-1] if "/" in repo_input else "unknown",
             "branch": branch,
             "commit_sha": "error",
