@@ -64,7 +64,7 @@ def _configure_logging() -> None:
     root.addHandler(handler)
 
 
-def _truncate_text(value: str | None, max_chars: int = LOG_BODY_MAX_CHARS) -> str:
+def _truncate_text(value: Optional[str], max_chars: int = LOG_BODY_MAX_CHARS) -> str:
     text = (value or "").strip()
     if len(text) <= max_chars:
         return text

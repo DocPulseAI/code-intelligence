@@ -11,6 +11,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Callable
+from typing import Optional
 
 # Configure logging
 LOG = logging.getLogger("epic1.cli")
@@ -24,7 +25,7 @@ _RBAC_HINTS = {"rbac", "role", "authorize"}
 _GITHUB_TOKEN_PREFIXES = ("ghp_", "github_pat_", "gho_", "ghu_", "ghs_", "ghr_")
 
 
-def _looks_like_github_token(value: str | None) -> bool:
+def _looks_like_github_token(value: Optional[str]) -> bool:
     token = str(value or "").strip()
     return token.startswith(_GITHUB_TOKEN_PREFIXES)
 
