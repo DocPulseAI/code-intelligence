@@ -410,6 +410,19 @@ def analyze():
         if run_id is not None and not isinstance(run_id, str):
             return jsonify({"error": "run_id must be a string"}), 400
         run_id = run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
+        ref_name = data.get("ref_name")
+        if ref_name is not None and not isinstance(ref_name, str):
+            return jsonify({"error": "ref_name must be a string"}), 400
+        ref_name = ref_name.strip() if isinstance(ref_name, str) and ref_name.strip() else None
+        ref_type = data.get("ref_type")
+        if ref_type is not None and not isinstance(ref_type, str):
+            return jsonify({"error": "ref_type must be a string"}), 400
+        ref_type = ref_type.strip() if isinstance(ref_type, str) and ref_type.strip() else None
+        baseline_ref = data.get("baseline_ref")
+        if baseline_ref is not None and not isinstance(baseline_ref, str):
+            return jsonify({"error": "baseline_ref must be a string"}), 400
+        baseline_ref = baseline_ref.strip() if isinstance(baseline_ref, str) and baseline_ref.strip() else None
+        is_preview = bool(data.get("is_preview", False))
         _log_event(
             logging.INFO,
             "EPIC1_ANALYZE_REQUEST",
@@ -417,6 +430,10 @@ def analyze():
             request_id=request_id,
             trace_id=trace_id,
             run_id=run_id,
+            ref_name=ref_name,
+            ref_type=ref_type,
+            baseline_ref=baseline_ref,
+            is_preview=is_preview,
             repo_url=repo_url,
             branch=branch,
             project_id=project_id,
@@ -482,9 +499,22 @@ def analyze():
         if not report:
             return _error_response("analysis", "Failed to parse analysis output", True)
 
+        envelope = {
+            "run_id": run_id,
+            "ref_name": ref_name,
+            "ref_type": ref_type,
+            "is_preview": is_preview,
+            "baseline_ref": baseline_ref,
+            "project_id": project_id,
+            "commit_sha": report.get("context", {}).get("commit_sha") if isinstance(report, dict) else None,
+        }
+        if isinstance(report, dict):
+            report.setdefault("pipeline_metadata", envelope)
+
         payload = {
             "status": "success",
-            "report": report
+            "report": report,
+            "pipeline_metadata": envelope,
         }
         if project_id is not None:
             payload["project_id"] = project_id
@@ -598,6 +628,19 @@ def analyze_local():
         if run_id is not None and not isinstance(run_id, str):
             return jsonify({"error": "run_id must be a string"}), 400
         run_id = run_id.strip() if isinstance(run_id, str) and run_id.strip() else None
+        ref_name = data.get("ref_name")
+        if ref_name is not None and not isinstance(ref_name, str):
+            return jsonify({"error": "ref_name must be a string"}), 400
+        ref_name = ref_name.strip() if isinstance(ref_name, str) and ref_name.strip() else None
+        ref_type = data.get("ref_type")
+        if ref_type is not None and not isinstance(ref_type, str):
+            return jsonify({"error": "ref_type must be a string"}), 400
+        ref_type = ref_type.strip() if isinstance(ref_type, str) and ref_type.strip() else None
+        baseline_ref = data.get("baseline_ref")
+        if baseline_ref is not None and not isinstance(baseline_ref, str):
+            return jsonify({"error": "baseline_ref must be a string"}), 400
+        baseline_ref = baseline_ref.strip() if isinstance(baseline_ref, str) and baseline_ref.strip() else None
+        is_preview = bool(data.get("is_preview", False))
         _log_event(
             logging.INFO,
             "EPIC1_LOCAL_ANALYZE_REQUEST",
@@ -605,6 +648,10 @@ def analyze_local():
             request_id=request_id,
             trace_id=trace_id,
             run_id=run_id,
+            ref_name=ref_name,
+            ref_type=ref_type,
+            baseline_ref=baseline_ref,
+            is_preview=is_preview,
             repo_path=repo_path,
             project_id=project_id,
             new_user=new_user,
@@ -666,9 +713,22 @@ def analyze_local():
         if not report:
             return _error_response("analysis", "Failed to parse analysis output", True)
 
+        envelope = {
+            "run_id": run_id,
+            "ref_name": ref_name,
+            "ref_type": ref_type,
+            "is_preview": is_preview,
+            "baseline_ref": baseline_ref,
+            "project_id": project_id,
+            "commit_sha": report.get("context", {}).get("commit_sha") if isinstance(report, dict) else None,
+        }
+        if isinstance(report, dict):
+            report.setdefault("pipeline_metadata", envelope)
+
         payload = {
             "status": "success",
-            "report": report
+            "report": report,
+            "pipeline_metadata": envelope,
         }
         if project_id is not None:
             payload["project_id"] = project_id

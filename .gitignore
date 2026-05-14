@@ -32,6 +32,10 @@ venv/
 # VS Code
 .vscode/
 
+# OS
+.DS_Store/
+.DS_Store
+
 # Build artifacts
 codeDetect/src/parsers/__pycache__/
 codeDetect/tests/__pycache__/
