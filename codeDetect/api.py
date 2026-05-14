@@ -52,6 +52,7 @@ def _int_env(name: str, default: int) -> int:
 
 
 LOG_BODY_MAX_CHARS = max(200, _int_env("EPIC1_LOG_BODY_MAX_CHARS", 1200))
+EPIC1_INTERNAL_TOKEN = os.getenv("EPIC1_INTERNAL_TOKEN", "").strip()
 
 
 def _configure_logging() -> None:
@@ -81,6 +82,13 @@ def _log_event(level: int, event_id: str, message: str, **fields):
     }
     payload.update(fields)
     LOG.log(level, json.dumps(payload, default=str))
+
+
+def _is_internal_request() -> bool:
+    if not EPIC1_INTERNAL_TOKEN:
+        return False
+    supplied = (request.headers.get("x-epic-internal-token") or "").strip()
+    return bool(supplied) and supplied == EPIC1_INTERNAL_TOKEN
 
 
 _configure_logging()
@@ -200,6 +208,7 @@ def _before_request_log():
         method=request.method,
         path=request.path,
         remote_addr=request.remote_addr,
+        internal_request=_is_internal_request(),
     )
 
 
