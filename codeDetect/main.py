@@ -956,6 +956,9 @@ def main():
                 for svc in ev.get("services", []):
                     if "name" in svc:
                         valid_nodes.add(svc["name"])
+                for repo in ev.get("repositories", []):
+                    if "name" in repo:
+                        valid_nodes.add(repo["name"])
 
                 for rel in ev.get("relationships", []):
                     # For EXPOSES_API, 'to' is 'METHOD /path'

@@ -23,7 +23,7 @@ class JavaParser:
         methods = sorted(set(methods))
 
         if not classes:
-            classes = re.findall(r"\bclass\s+([A-Za-z_][A-Za-z0-9_]*)\b", text)
+            classes = re.findall(r"\b(?:class|interface)\s+([A-Za-z_][A-Za-z0-9_]*)\b", text)
         classes = sorted(set(classes))
 
         if not annotations:
