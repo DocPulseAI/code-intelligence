@@ -1,1 +1,1695 @@
-{"analysis_summary":{"breaking_changes_detected":false,"highest_severity":"MINOR","total_files":2},"baseline_commit":null,"branch":"main","breaking_changes":[],"commit_sha":"f6d540ed59e9617466d52b7477b35e68a11d83b7","deterministic":true,"meta":{"generated_at":"2024-01-01T05:30:00","tool_version":"1.0.0"},"project_id":"nested_router","report":{"affected_packages":["api","express"],"analysis_summary":{"breaking_changes_detected":false,"highest_severity":"MINOR","severity_distribution":{"MAJOR":0,"MINOR":1,"PATCH":1},"total_files":2,"total_files_analyzed":2},"api_contract":{"endpoints":[]},"api_summary":{"added":0,"modified":0,"removed":0},"api_surface":[],"architecture":{"external_dependencies":[],"layers":[],"pattern":"modular monolith"},"architecture_insights":{"dependency_insights":{"circular_dependencies":[],"high_fan_in_modules":[],"unstable_modules":["app"]},"layer_violations":[],"module_centrality":[],"tightly_coupled_modules":[]},"architecture_reconstruction":{"components":[],"edges":[],"layers":[],"pattern":"Layered Architecture"},"breaking_change_details":[],"call_graph":[],"call_graph_analysis":{"dead_functions":[],"entry_points":[],"execution_paths":[],"max_call_depth":0},"change_complexity_score":0.2,"change_summary":"fixture","changes":[{"change_type":"ADDED","component":"backend","features":{"api_endpoints":[],"classes":[],"dependencies":["./api","express"],"exported_classes":[],"exported_functions":[],"functions":[],"hooks":[],"react_components":[]},"file":"app.js","schema_tags":[],"severity":"PATCH"},{"change_type":"ADDED","component":"backend","features":{},"file":"package.json","schema_tags":[],"severity":"MINOR"}],"code_intelligence":{"call_graph":{"edges":[],"nodes":[]},"dependency_graph":{"circular_dependencies":[],"cycle_detected":false,"dependencies":[],"modules":["app"]},"repository_graph":{"edges":[],"nodes":[{"id":"app","type":"module"}]},"symbol_index":[]},"context":{"author":"Deterministic Bot","author_email":"deterministic@example.com","branch":"main","commit_sha":"f6d540ed59e9617466d52b7477b35e68a11d83b7","commit_timestamp":"2024-01-01T05:30:00","full_sha":"f6d540ed59e9617466d52b7477b35e68a11d83b7","generated_at":"2024-01-01T05:30:00","repository":"nested_router"},"corrected_call_graph":{"execution_paths":[],"true_entry_points":[]},"data_model":{"entities":[],"relationships":[]},"database_impact":{"model_count":0,"models":[],"schema_changed":false,"tables_affected":[]},"dead_function_analysis":{"count":0,"true_dead_functions":[]},"dependency_analysis":{"core_modules":[],"cycles":[],"graph_metrics":{"max_dependency_depth":1,"node_metrics":{"./api":{"centrality":0.33,"fan_in":1,"fan_out":0,"instability":0.0},"app":{"centrality":0.67,"fan_in":0,"fan_out":2,"instability":1.0},"express":{"centrality":0.33,"fan_in":1,"fan_out":0,"instability":0.0},"package.json":{"centrality":0.0,"fan_in":0,"fan_out":0,"instability":0.0}}},"high_coupling_modules":[]},"dependency_classification":{"dev_dependencies":[],"external_dependencies":["api","express"],"internal_modules":[],"static_assets":[]},"dependency_graph":{"analysis":{"cycle_detected":false,"cycles":[]},"edges":[{"from":"app","to":"./api","type":"external"},{"from":"app","to":"express","type":"external"}],"nodes":[{"id":"./api","type":"internal_module"},{"id":"app","type":"internal_module"},{"id":"express","type":"external_package"},{"id":"package.json","type":"external_package"}]},"doc_contract":{"requires_adr":false,"requires_api_reference":true,"requires_architecture_doc":true,"requires_readme":true},"documentation_contract":{"requires_adr":false,"requires_api_reference":true,"requires_architecture_doc":true,"requires_readme":true},"files":[{"change_type":"ADDED","component":"backend","features":{"api_endpoints":[],"classes":[],"dependencies":["./api","express"],"exported_classes":[],"exported_functions":[],"functions":[],"hooks":[],"react_components":[]},"path":"app.js","severity":"PATCH"},{"change_type":"ADDED","component":"backend","features":{},"path":"package.json","severity":"MINOR"}],"impact_analysis":{"impact_analysis":{"affected_components":[],"blast_radius":1,"changed_components":["app"],"metrics":{"api_changes":0,"call_chain_depth":0,"db_changes":0,"module_changes":1},"risk_score":2.0,"severity":"MINOR"}},"impact_propagation":{"affected_callers":[],"affected_modules":["./api","app","express","package.json"],"blast_radius":4,"changed_files":[{"change_type":"ADDED","component":"backend","features":{"api_endpoints":[],"classes":[],"dependencies":["./api","express"],"exported_classes":[],"exported_functions":[],"functions":[],"hooks":[],"react_components":[]},"file":"app.js","schema_tags":[],"severity":"PATCH"},{"change_type":"ADDED","component":"backend","features":{},"file":"package.json","schema_tags":[],"severity":"MINOR"}]},"infra_analysis":{"ci_workflow":null,"docker":false},"quality_warnings":["QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)","QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)"],"repository_evidence":{"api_mounts":[{"base_path":"/api","router":"api.js"},{"base_path":"/projects","router":"projects.js"}],"apis":[],"components":[{"files":["app.js"],"framework":"express","name":"app","path":"","type":"backend_module"}],"entities":[],"file_evidence":{"app.js":{"api_endpoints":[],"classes":[],"dependencies":["./api","express"],"exported_classes":[],"exported_functions":[],"functions":[],"hooks":[],"react_components":[]},"package.json":{}},"frontend_routes":[],"modules":[{"files":["app.js"],"framework":"express","name":"app","path":"","type":"backend_module"}],"mounts":[{"line":0,"mount_path":"/api","mounted_router":"api","parent":"__root__","path":"/api","router":"api","router_file":"api.js","source_file":"app.js"},{"line":0,"mount_path":"/projects","mounted_router":"projects","parent":"api","path":"/projects","router":"projects","router_file":"projects.js","source_file":"api.js"}],"quality_warnings":["QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)"],"relationships":[],"repositories":[],"routers":[],"services":[],"tech_stack":{"backend":["express"],"database":[],"frontend":[],"infrastructure":[]}},"repository_type":"backend-service","risk_analysis":{"blast_radius":"LOCAL","migration_required":false,"operational_risk":"LOW","test_scope":["unit"]},"schema_analysis":{"models":[],"models_detected":0,"relationships":[]},"search_index":{"apis":[],"modules":[{"dependencies":["./api","express"],"file":"app.js","name":"app","type":"backend"}],"references":[],"symbols":[]},"summary":"Analyzed 2 files: 0 endpoints, 0 breaking changes, stack=express","tech_stack":{"backend_framework":"express","ci":[],"database":null,"frontend_framework":null,"infra":[],"orm":null}},"schema_version":"epic1-impact/v3","severity":"PATCH","statistics":{"major":0,"minor":0,"patch":0,"total_changes":0},"status":"success","version":"1.0.0"}
+{
+  "analysis_summary": {
+    "breaking_changes_detected": false,
+    "highest_severity": "MAJOR",
+    "total_files": 4
+  },
+  "baseline_commit": null,
+  "branch": "main",
+  "breaking_changes": [],
+  "commit_sha": "f6d540ed59e9617466d52b7477b35e68a11d83b7",
+  "deterministic": true,
+  "meta": {
+    "generated_at": "2024-01-01T05:30:00",
+    "tool_version": "1.0.0"
+  },
+  "project_id": "nested_router",
+  "report": {
+    "affected_packages": [
+      "api",
+      "express",
+      "projects"
+    ],
+    "analysis_summary": {
+      "breaking_changes_detected": false,
+      "highest_severity": "MAJOR",
+      "severity_distribution": {
+        "MAJOR": 3,
+        "MINOR": 1,
+        "PATCH": 0
+      },
+      "total_files": 4,
+      "total_files_analyzed": 4
+    },
+    "api_contract": {
+      "endpoints": [
+        {
+          "auth": {
+            "required": true,
+            "type": "unknown"
+          },
+          "auth_required": true,
+          "component": "projects",
+          "confidence": 0.8,
+          "controller": "handler",
+          "description": "",
+          "endpoint_hash": "8c49547081d6fa117b4d7055e54abb4f6d9b18b5e61d1ba605519c64ce51578a",
+          "example": {},
+          "line": 3,
+          "method": "GET",
+          "normalized_key": "get /api/projects/:id",
+          "operation_id": "getApiProjectsId",
+          "path": "/api/projects/:id",
+          "request": {
+            "body_schema": null,
+            "headers": [],
+            "path_params": [],
+            "query_params": []
+          },
+          "responses": [],
+          "router_file": "projects.js",
+          "source": {
+            "controller": "handler"
+          },
+          "source_file": "projects.js",
+          "summary": "",
+          "tags": [
+            "projects"
+          ],
+          "warnings": []
+        },
+        {
+          "auth": {
+            "required": true,
+            "type": "unknown"
+          },
+          "auth_required": true,
+          "component": "projects",
+          "confidence": 0.8,
+          "controller": "handler",
+          "description": "",
+          "endpoint_hash": "1044b4d0754d4cf413e29c7010ad66da32426b5ef077757b5962641f3a4e1cc2",
+          "example": {},
+          "line": 4,
+          "method": "PATCH",
+          "normalized_key": "patch /api/projects/:id",
+          "operation_id": "patchApiProjectsId",
+          "path": "/api/projects/:id",
+          "request": {
+            "body_schema": null,
+            "headers": [],
+            "path_params": [],
+            "query_params": []
+          },
+          "responses": [],
+          "router_file": "projects.js",
+          "source": {
+            "controller": "handler"
+          },
+          "source_file": "projects.js",
+          "summary": "",
+          "tags": [
+            "projects"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    "api_summary": {
+      "added": 0,
+      "modified": 0,
+      "removed": 0
+    },
+    "api_surface": [
+      {
+        "auth_required": true,
+        "controller": "handler",
+        "method": "GET",
+        "path": "/api/projects/{id}",
+        "request_schema_hash": "456e42238c3721627d129a5d6aa2a6ccdf2a2462f31a6b6901ddc01d24538d90",
+        "response_schema_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      {
+        "auth_required": true,
+        "controller": "handler",
+        "method": "PATCH",
+        "path": "/api/projects/{id}",
+        "request_schema_hash": "456e42238c3721627d129a5d6aa2a6ccdf2a2462f31a6b6901ddc01d24538d90",
+        "response_schema_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    ],
+    "architecture": {
+      "external_dependencies": [],
+      "layers": [],
+      "pattern": "modular monolith"
+    },
+    "architecture_insights": {
+      "dependency_insights": {
+        "circular_dependencies": [],
+        "high_fan_in_modules": [
+          "express"
+        ],
+        "unstable_modules": [
+          "app"
+        ]
+      },
+      "layer_violations": [],
+      "module_centrality": [
+        "express"
+      ],
+      "tightly_coupled_modules": []
+    },
+    "architecture_reconstruction": {
+      "components": [
+        {
+          "id": "api",
+          "layer": "presentation",
+          "type": "router"
+        },
+        {
+          "id": "projects",
+          "layer": "presentation",
+          "type": "router"
+        }
+      ],
+      "edges": [
+        {
+          "from": "api",
+          "to": "api",
+          "type": "calls"
+        },
+        {
+          "from": "api",
+          "to": "projects",
+          "type": "calls"
+        },
+        {
+          "from": "projects",
+          "to": "projects",
+          "type": "calls"
+        }
+      ],
+      "layers": [
+        "presentation"
+      ],
+      "pattern": "Layered Architecture"
+    },
+    "breaking_change_details": [],
+    "call_graph": [],
+    "call_graph_analysis": {
+      "dead_functions": [],
+      "entry_points": [],
+      "execution_paths": [],
+      "max_call_depth": 0
+    },
+    "change_complexity_score": 0.4,
+    "change_summary": "fixture",
+    "changes": [
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "projects",
+              "line": 4,
+              "mount_path": "/projects",
+              "mounted_router": "projects",
+              "route": "/projects",
+              "router_symbol": "api",
+              "verb": "USE"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "./projects",
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "api"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            },
+            {
+              "imported": "default",
+              "local": "projects",
+              "source": "./projects"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express.Router",
+              "kind": "call",
+              "name": "api",
+              "value": ""
+            },
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "projects",
+              "value": ""
+            }
+          ]
+        },
+        "file": "api.js",
+        "schema_tags": [],
+        "severity": "MAJOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "api",
+              "line": 4,
+              "mount_path": "/api",
+              "mounted_router": "api",
+              "route": "/api",
+              "router_symbol": "app",
+              "verb": "USE"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "./api",
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "app"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            },
+            {
+              "imported": "default",
+              "local": "api",
+              "source": "./api"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express",
+              "kind": "call",
+              "name": "app",
+              "value": ""
+            },
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "api",
+              "value": ""
+            }
+          ]
+        },
+        "file": "app.js",
+        "schema_tags": [],
+        "severity": "MAJOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {},
+        "file": "package.json",
+        "schema_tags": [],
+        "severity": "MINOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "handler",
+              "line": 3,
+              "middleware": [
+                "authenticate",
+                "authorizeRole"
+              ],
+              "route": "/:id",
+              "router_symbol": "projects",
+              "verb": "GET"
+            },
+            {
+              "handler": "handler",
+              "line": 4,
+              "middleware": [
+                "authenticate"
+              ],
+              "route": "/:id",
+              "router_symbol": "projects",
+              "verb": "PATCH"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "projects"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express.Router",
+              "kind": "call",
+              "name": "projects",
+              "value": ""
+            }
+          ]
+        },
+        "file": "projects.js",
+        "schema_tags": [],
+        "severity": "MAJOR"
+      }
+    ],
+    "code_intelligence": {
+      "call_graph": {
+        "edges": [],
+        "nodes": []
+      },
+      "dependency_graph": {
+        "circular_dependencies": [],
+        "cycle_detected": false,
+        "dependencies": [
+          {
+            "from": "api",
+            "to": "projects"
+          },
+          {
+            "from": "app",
+            "to": "api"
+          }
+        ],
+        "modules": [
+          "api",
+          "app",
+          "projects"
+        ]
+      },
+      "repository_graph": {
+        "edges": [
+          {
+            "from": "GET /api/projects/:id",
+            "to": "handler",
+            "type": "calls"
+          },
+          {
+            "from": "PATCH /api/projects/:id",
+            "to": "handler",
+            "type": "calls"
+          },
+          {
+            "from": "api",
+            "to": "projects",
+            "type": "depends_on"
+          },
+          {
+            "from": "app",
+            "to": "api",
+            "type": "depends_on"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "GET /api/projects/:id",
+            "type": "api"
+          },
+          {
+            "id": "PATCH /api/projects/:id",
+            "type": "api"
+          },
+          {
+            "id": "api",
+            "type": "module"
+          },
+          {
+            "id": "app",
+            "type": "module"
+          },
+          {
+            "id": "handler",
+            "type": "controller"
+          },
+          {
+            "id": "projects",
+            "type": "module"
+          }
+        ]
+      },
+      "symbol_index": [
+        {
+          "file": "projects.js",
+          "line": 3,
+          "name": "GET /api/projects/:id",
+          "type": "route"
+        },
+        {
+          "file": "projects.js",
+          "line": 3,
+          "name": "handler",
+          "type": "controller"
+        },
+        {
+          "file": "projects.js",
+          "line": 4,
+          "name": "PATCH /api/projects/:id",
+          "type": "route"
+        }
+      ]
+    },
+    "context": {
+      "author": "Deterministic Bot",
+      "author_email": "deterministic@example.com",
+      "branch": "main",
+      "commit_sha": "f6d540ed59e9617466d52b7477b35e68a11d83b7",
+      "commit_timestamp": "2024-01-01T05:30:00",
+      "full_sha": "f6d540ed59e9617466d52b7477b35e68a11d83b7",
+      "generated_at": "2024-01-01T05:30:00",
+      "repository": "nested_router"
+    },
+    "corrected_call_graph": {
+      "execution_paths": [],
+      "true_entry_points": []
+    },
+    "data_model": {
+      "entities": [],
+      "relationships": []
+    },
+    "database_impact": {
+      "model_count": 0,
+      "models": [],
+      "schema_changed": false,
+      "tables_affected": []
+    },
+    "dead_function_analysis": {
+      "count": 0,
+      "true_dead_functions": []
+    },
+    "dependency_analysis": {
+      "core_modules": [
+        "express"
+      ],
+      "cycles": [],
+      "graph_metrics": {
+        "max_dependency_depth": 3,
+        "node_metrics": {
+          "api": {
+            "centrality": 0.75,
+            "fan_in": 1,
+            "fan_out": 2,
+            "instability": 0.67
+          },
+          "app": {
+            "centrality": 0.5,
+            "fan_in": 0,
+            "fan_out": 2,
+            "instability": 1.0
+          },
+          "express": {
+            "centrality": 0.75,
+            "fan_in": 3,
+            "fan_out": 0,
+            "instability": 0.0
+          },
+          "package.json": {
+            "centrality": 0.0,
+            "fan_in": 0,
+            "fan_out": 0,
+            "instability": 0.0
+          },
+          "projects": {
+            "centrality": 0.5,
+            "fan_in": 1,
+            "fan_out": 1,
+            "instability": 0.5
+          }
+        }
+      },
+      "high_coupling_modules": []
+    },
+    "dependency_classification": {
+      "dev_dependencies": [],
+      "external_dependencies": [
+        "api",
+        "express",
+        "projects"
+      ],
+      "internal_modules": [],
+      "static_assets": []
+    },
+    "dependency_graph": {
+      "analysis": {
+        "cycle_detected": false,
+        "cycles": []
+      },
+      "edges": [
+        {
+          "from": "api",
+          "to": "express",
+          "type": "external"
+        },
+        {
+          "from": "api",
+          "to": "projects",
+          "type": "internal"
+        },
+        {
+          "from": "app",
+          "to": "api",
+          "type": "internal"
+        },
+        {
+          "from": "app",
+          "to": "express",
+          "type": "external"
+        },
+        {
+          "from": "projects",
+          "to": "express",
+          "type": "external"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "api",
+          "type": "internal_module"
+        },
+        {
+          "id": "app",
+          "type": "internal_module"
+        },
+        {
+          "id": "express",
+          "type": "external_package"
+        },
+        {
+          "id": "package.json",
+          "type": "external_package"
+        },
+        {
+          "id": "projects",
+          "type": "internal_module"
+        }
+      ]
+    },
+    "doc_contract": {
+      "requires_adr": false,
+      "requires_api_reference": true,
+      "requires_architecture_doc": true,
+      "requires_readme": true
+    },
+    "documentation_contract": {
+      "requires_adr": false,
+      "requires_api_reference": true,
+      "requires_architecture_doc": true,
+      "requires_readme": true
+    },
+    "files": [
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "projects",
+              "line": 4,
+              "mount_path": "/projects",
+              "mounted_router": "projects",
+              "route": "/projects",
+              "router_symbol": "api",
+              "verb": "USE"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "./projects",
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "api"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            },
+            {
+              "imported": "default",
+              "local": "projects",
+              "source": "./projects"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express.Router",
+              "kind": "call",
+              "name": "api",
+              "value": ""
+            },
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "projects",
+              "value": ""
+            }
+          ]
+        },
+        "path": "api.js",
+        "severity": "MAJOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "api",
+              "line": 4,
+              "mount_path": "/api",
+              "mounted_router": "api",
+              "route": "/api",
+              "router_symbol": "app",
+              "verb": "USE"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "./api",
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "app"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            },
+            {
+              "imported": "default",
+              "local": "api",
+              "source": "./api"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express",
+              "kind": "call",
+              "name": "app",
+              "value": ""
+            },
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "api",
+              "value": ""
+            }
+          ]
+        },
+        "path": "app.js",
+        "severity": "MAJOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {},
+        "path": "package.json",
+        "severity": "MINOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "handler",
+              "line": 3,
+              "middleware": [
+                "authenticate",
+                "authorizeRole"
+              ],
+              "route": "/:id",
+              "router_symbol": "projects",
+              "verb": "GET"
+            },
+            {
+              "handler": "handler",
+              "line": 4,
+              "middleware": [
+                "authenticate"
+              ],
+              "route": "/:id",
+              "router_symbol": "projects",
+              "verb": "PATCH"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "projects"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express.Router",
+              "kind": "call",
+              "name": "projects",
+              "value": ""
+            }
+          ]
+        },
+        "path": "projects.js",
+        "severity": "MAJOR"
+      }
+    ],
+    "impact_analysis": {
+      "impact_analysis": {
+        "affected_components": [],
+        "blast_radius": 3,
+        "changed_components": [
+          "api",
+          "app",
+          "projects"
+        ],
+        "metrics": {
+          "api_changes": 0,
+          "call_chain_depth": 0,
+          "db_changes": 0,
+          "module_changes": 3
+        },
+        "risk_score": 6.0,
+        "severity": "MINOR"
+      }
+    },
+    "impact_propagation": {
+      "affected_callers": [],
+      "affected_modules": [
+        "api",
+        "app",
+        "express",
+        "package.json",
+        "projects"
+      ],
+      "blast_radius": 5,
+      "changed_files": [
+        {
+          "change_type": "ADDED",
+          "component": "backend",
+          "features": {
+            "api_calls": [],
+            "api_endpoints": [
+              {
+                "handler": "projects",
+                "line": 4,
+                "mount_path": "/projects",
+                "mounted_router": "projects",
+                "route": "/projects",
+                "router_symbol": "api",
+                "verb": "USE"
+              }
+            ],
+            "api_mounts": [],
+            "calls": [],
+            "classes": [],
+            "dependencies": [
+              "./projects",
+              "express"
+            ],
+            "exported_classes": [],
+            "exported_functions": [],
+            "exports": [
+              {
+                "exported": "default",
+                "local": "api"
+              }
+            ],
+            "functions": [],
+            "hooks": [],
+            "imports": [
+              {
+                "imported": "default",
+                "local": "express",
+                "source": "express"
+              },
+              {
+                "imported": "default",
+                "local": "projects",
+                "source": "./projects"
+              }
+            ],
+            "jsx_routes": [],
+            "mongoose_models": [],
+            "mongoose_schemas": {},
+            "react_components": [],
+            "variables": [
+              {
+                "callee": "require",
+                "kind": "call",
+                "name": "express",
+                "value": ""
+              },
+              {
+                "callee": "express.Router",
+                "kind": "call",
+                "name": "api",
+                "value": ""
+              },
+              {
+                "callee": "require",
+                "kind": "call",
+                "name": "projects",
+                "value": ""
+              }
+            ]
+          },
+          "file": "api.js",
+          "schema_tags": [],
+          "severity": "MAJOR"
+        },
+        {
+          "change_type": "ADDED",
+          "component": "backend",
+          "features": {
+            "api_calls": [],
+            "api_endpoints": [
+              {
+                "handler": "api",
+                "line": 4,
+                "mount_path": "/api",
+                "mounted_router": "api",
+                "route": "/api",
+                "router_symbol": "app",
+                "verb": "USE"
+              }
+            ],
+            "api_mounts": [],
+            "calls": [],
+            "classes": [],
+            "dependencies": [
+              "./api",
+              "express"
+            ],
+            "exported_classes": [],
+            "exported_functions": [],
+            "exports": [
+              {
+                "exported": "default",
+                "local": "app"
+              }
+            ],
+            "functions": [],
+            "hooks": [],
+            "imports": [
+              {
+                "imported": "default",
+                "local": "express",
+                "source": "express"
+              },
+              {
+                "imported": "default",
+                "local": "api",
+                "source": "./api"
+              }
+            ],
+            "jsx_routes": [],
+            "mongoose_models": [],
+            "mongoose_schemas": {},
+            "react_components": [],
+            "variables": [
+              {
+                "callee": "require",
+                "kind": "call",
+                "name": "express",
+                "value": ""
+              },
+              {
+                "callee": "express",
+                "kind": "call",
+                "name": "app",
+                "value": ""
+              },
+              {
+                "callee": "require",
+                "kind": "call",
+                "name": "api",
+                "value": ""
+              }
+            ]
+          },
+          "file": "app.js",
+          "schema_tags": [],
+          "severity": "MAJOR"
+        },
+        {
+          "change_type": "ADDED",
+          "component": "backend",
+          "features": {},
+          "file": "package.json",
+          "schema_tags": [],
+          "severity": "MINOR"
+        },
+        {
+          "change_type": "ADDED",
+          "component": "backend",
+          "features": {
+            "api_calls": [],
+            "api_endpoints": [
+              {
+                "handler": "handler",
+                "line": 3,
+                "middleware": [
+                  "authenticate",
+                  "authorizeRole"
+                ],
+                "route": "/:id",
+                "router_symbol": "projects",
+                "verb": "GET"
+              },
+              {
+                "handler": "handler",
+                "line": 4,
+                "middleware": [
+                  "authenticate"
+                ],
+                "route": "/:id",
+                "router_symbol": "projects",
+                "verb": "PATCH"
+              }
+            ],
+            "api_mounts": [],
+            "calls": [],
+            "classes": [],
+            "dependencies": [
+              "express"
+            ],
+            "exported_classes": [],
+            "exported_functions": [],
+            "exports": [
+              {
+                "exported": "default",
+                "local": "projects"
+              }
+            ],
+            "functions": [],
+            "hooks": [],
+            "imports": [
+              {
+                "imported": "default",
+                "local": "express",
+                "source": "express"
+              }
+            ],
+            "jsx_routes": [],
+            "mongoose_models": [],
+            "mongoose_schemas": {},
+            "react_components": [],
+            "variables": [
+              {
+                "callee": "require",
+                "kind": "call",
+                "name": "express",
+                "value": ""
+              },
+              {
+                "callee": "express.Router",
+                "kind": "call",
+                "name": "projects",
+                "value": ""
+              }
+            ]
+          },
+          "file": "projects.js",
+          "schema_tags": [],
+          "severity": "MAJOR"
+        }
+      ]
+    },
+    "infra_analysis": {
+      "ci_workflow": null,
+      "docker": false
+    },
+    "quality_warnings": [],
+    "repository_evidence": {
+      "api_mounts": [
+        {
+          "base_path": "/api",
+          "router": "api"
+        },
+        {
+          "base_path": "/api",
+          "router": "api.js"
+        },
+        {
+          "base_path": "/projects",
+          "router": "projects"
+        },
+        {
+          "base_path": "/projects",
+          "router": "projects.js"
+        }
+      ],
+      "apis": [
+        {
+          "auth_required": true,
+          "controller": "handler",
+          "line": 3,
+          "method": "GET",
+          "middleware": [
+            "authenticate",
+            "authorizeRole"
+          ],
+          "module": "projects",
+          "path": "/api/projects/:id",
+          "router_file": "projects.js",
+          "source_file": "projects.js"
+        },
+        {
+          "auth_required": true,
+          "controller": "handler",
+          "line": 4,
+          "method": "PATCH",
+          "middleware": [
+            "authenticate"
+          ],
+          "module": "projects",
+          "path": "/api/projects/:id",
+          "router_file": "projects.js",
+          "source_file": "projects.js"
+        }
+      ],
+      "components": [
+        {
+          "files": [
+            "api.js"
+          ],
+          "framework": "express",
+          "name": "api",
+          "path": "",
+          "type": "backend_module"
+        },
+        {
+          "files": [
+            "app.js"
+          ],
+          "framework": "express",
+          "name": "app",
+          "path": "",
+          "type": "backend_module"
+        },
+        {
+          "files": [
+            "projects.js"
+          ],
+          "framework": "express",
+          "name": "projects",
+          "path": "",
+          "type": "backend_module"
+        }
+      ],
+      "entities": [],
+      "file_evidence": {
+        "api.js": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "projects",
+              "line": 4,
+              "mount_path": "/projects",
+              "mounted_router": "projects",
+              "route": "/projects",
+              "router_symbol": "api",
+              "verb": "USE"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "./projects",
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "api"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            },
+            {
+              "imported": "default",
+              "local": "projects",
+              "source": "./projects"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express.Router",
+              "kind": "call",
+              "name": "api",
+              "value": ""
+            },
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "projects",
+              "value": ""
+            }
+          ]
+        },
+        "app.js": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "api",
+              "line": 4,
+              "mount_path": "/api",
+              "mounted_router": "api",
+              "route": "/api",
+              "router_symbol": "app",
+              "verb": "USE"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "./api",
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "app"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            },
+            {
+              "imported": "default",
+              "local": "api",
+              "source": "./api"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express",
+              "kind": "call",
+              "name": "app",
+              "value": ""
+            },
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "api",
+              "value": ""
+            }
+          ]
+        },
+        "package.json": {},
+        "projects.js": {
+          "api_calls": [],
+          "api_endpoints": [
+            {
+              "handler": "handler",
+              "line": 3,
+              "middleware": [
+                "authenticate",
+                "authorizeRole"
+              ],
+              "route": "/:id",
+              "router_symbol": "projects",
+              "verb": "GET"
+            },
+            {
+              "handler": "handler",
+              "line": 4,
+              "middleware": [
+                "authenticate"
+              ],
+              "route": "/:id",
+              "router_symbol": "projects",
+              "verb": "PATCH"
+            }
+          ],
+          "api_mounts": [],
+          "calls": [],
+          "classes": [],
+          "dependencies": [
+            "express"
+          ],
+          "exported_classes": [],
+          "exported_functions": [],
+          "exports": [
+            {
+              "exported": "default",
+              "local": "projects"
+            }
+          ],
+          "functions": [],
+          "hooks": [],
+          "imports": [
+            {
+              "imported": "default",
+              "local": "express",
+              "source": "express"
+            }
+          ],
+          "jsx_routes": [],
+          "mongoose_models": [],
+          "mongoose_schemas": {},
+          "react_components": [],
+          "variables": [
+            {
+              "callee": "require",
+              "kind": "call",
+              "name": "express",
+              "value": ""
+            },
+            {
+              "callee": "express.Router",
+              "kind": "call",
+              "name": "projects",
+              "value": ""
+            }
+          ]
+        }
+      },
+      "frontend_routes": [],
+      "modules": [
+        {
+          "files": [
+            "api.js"
+          ],
+          "framework": "express",
+          "name": "api",
+          "path": "",
+          "type": "backend_module"
+        },
+        {
+          "files": [
+            "app.js"
+          ],
+          "framework": "express",
+          "name": "app",
+          "path": "",
+          "type": "backend_module"
+        },
+        {
+          "files": [
+            "projects.js"
+          ],
+          "framework": "express",
+          "name": "projects",
+          "path": "",
+          "type": "backend_module"
+        }
+      ],
+      "mounts": [
+        {
+          "line": 4,
+          "mount_path": "/api",
+          "mounted_router": "api",
+          "parent": "app",
+          "path": "/api",
+          "router": "api",
+          "router_file": "",
+          "source_file": "app.js"
+        },
+        {
+          "line": 0,
+          "mount_path": "/api",
+          "mounted_router": "api",
+          "parent": "__root__",
+          "path": "/api",
+          "router": "api",
+          "router_file": "api.js",
+          "source_file": "app.js"
+        },
+        {
+          "line": 4,
+          "mount_path": "/projects",
+          "mounted_router": "projects",
+          "parent": "api",
+          "path": "/projects",
+          "router": "projects",
+          "router_file": "",
+          "source_file": "api.js"
+        },
+        {
+          "line": 0,
+          "mount_path": "/projects",
+          "mounted_router": "projects",
+          "parent": "api",
+          "path": "/projects",
+          "router": "projects",
+          "router_file": "projects.js",
+          "source_file": "api.js"
+        }
+      ],
+      "quality_warnings": [],
+      "relationships": [
+        {
+          "from": "api",
+          "to": "api",
+          "type": "router_serves_component"
+        },
+        {
+          "from": "api",
+          "to": "express",
+          "type": "IMPORTS_MODULE"
+        },
+        {
+          "from": "api",
+          "to": "projects",
+          "type": "IMPORTS_MODULE"
+        },
+        {
+          "from": "app",
+          "to": "api",
+          "type": "IMPORTS_MODULE"
+        },
+        {
+          "from": "app",
+          "to": "express",
+          "type": "IMPORTS_MODULE"
+        },
+        {
+          "from": "projects",
+          "to": "GET /api/projects/:id",
+          "type": "EXPOSES_API"
+        },
+        {
+          "from": "projects",
+          "to": "PATCH /api/projects/:id",
+          "type": "EXPOSES_API"
+        },
+        {
+          "from": "projects",
+          "to": "express",
+          "type": "IMPORTS_MODULE"
+        },
+        {
+          "from": "projects",
+          "to": "projects",
+          "type": "router_serves_component"
+        }
+      ],
+      "repositories": [],
+      "routers": [
+        {
+          "name": "api",
+          "routes": [
+            "USE /projects"
+          ],
+          "source_file": "api.js",
+          "type": "express_router"
+        },
+        {
+          "name": "projects",
+          "routes": [
+            "GET /:id",
+            "PATCH /:id"
+          ],
+          "source_file": "projects.js",
+          "type": "express_router"
+        }
+      ],
+      "services": [],
+      "tech_stack": {
+        "backend": [
+          "express"
+        ],
+        "database": [],
+        "frontend": [],
+        "infrastructure": []
+      }
+    },
+    "repository_type": "backend-service",
+    "risk_analysis": {
+      "blast_radius": "LOCAL",
+      "migration_required": false,
+      "operational_risk": "LOW",
+      "test_scope": [
+        "unit"
+      ]
+    },
+    "schema_analysis": {
+      "models": [],
+      "models_detected": 0,
+      "relationships": []
+    },
+    "search_index": {
+      "apis": [
+        {
+          "controller": "handler",
+          "endpoint": "GET /api/projects/:id",
+          "method": "GET",
+          "service": ""
+        },
+        {
+          "controller": "handler",
+          "endpoint": "PATCH /api/projects/:id",
+          "method": "PATCH",
+          "service": ""
+        }
+      ],
+      "modules": [
+        {
+          "dependencies": [
+            "express",
+            "projects"
+          ],
+          "file": "api.js",
+          "name": "api",
+          "type": "backend"
+        },
+        {
+          "dependencies": [
+            "api",
+            "express"
+          ],
+          "file": "app.js",
+          "name": "app",
+          "type": "backend"
+        },
+        {
+          "dependencies": [
+            "express"
+          ],
+          "file": "projects.js",
+          "name": "projects",
+          "type": "controller"
+        }
+      ],
+      "references": [
+        {
+          "called_by": [
+            "GET /api/projects/:id",
+            "PATCH /api/projects/:id"
+          ],
+          "calls": [],
+          "symbol": "handler"
+        }
+      ],
+      "symbols": [
+        {
+          "file": "projects.js",
+          "line": 3,
+          "module": "projects",
+          "name": "handler",
+          "type": "controller"
+        }
+      ]
+    },
+    "summary": "Analyzed 4 files: 2 endpoints, 0 breaking changes, stack=express",
+    "tech_stack": {
+      "backend_framework": "express",
+      "ci": [],
+      "database": null,
+      "frontend_framework": null,
+      "infra": [],
+      "orm": null
+    }
+  },
+  "schema_version": "epic1-impact/v3",
+  "severity": "PATCH",
+  "statistics": {
+    "major": 0,
+    "minor": 0,
+    "patch": 0,
+    "total_changes": 0
+  },
+  "status": "success",
+  "version": "1.0.0"
+}

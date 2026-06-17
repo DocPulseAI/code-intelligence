@@ -1239,6 +1239,13 @@ def _resolve_express_candidates_internal(
     for edge in edges:
         incoming.setdefault(edge.child, []).append(edge)
 
+    dormant_files = set()
+    if has_any_mount_edges:
+        for fp, symbols in router_symbols_by_file.items():
+            if symbols:
+                if not any(RouterIdentity(fp, s) in incoming for s in symbols):
+                    dormant_files.add(fp)
+
     memo: dict[RouterIdentity, list[tuple[str, tuple[str, ...]]]] = {}
     active: set[RouterIdentity] = set()
 
@@ -1256,8 +1263,10 @@ def _resolve_express_candidates_internal(
         )
         contexts: list[tuple[str, tuple[str, ...]]]
         if not edges_in:
+            if identity.file_path in dormant_files:
+                contexts = []
             # Only root/app identities may emit routes without incoming mounts.
-            if identity.router_symbol == "__root__":
+            elif identity.router_symbol == "__root__":
                 contexts = [("", tuple())]
             elif not has_any_mount_edges:
                 # Backward compatibility for standalone router files in repos

@@ -69,6 +69,18 @@ class TSParser:
                     text,
                 )
             )
+            funcs.update(
+                re.findall(
+                    r"\b([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\s*\()?\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>",
+                    text,
+                )
+            )
+            funcs.update(
+                re.findall(
+                    r"\b([A-Za-z_]\w*)\s*=\s*asyncHandler\s*\(",
+                    text,
+                )
+            )
             features["functions"] = sorted(funcs)
         if not features.get("classes"):
             features["classes"] = sorted(set(re.findall(r"\b(?:abstract\s+)?class\s+([A-Za-z_]\w*)\b", text)))

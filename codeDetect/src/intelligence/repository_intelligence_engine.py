@@ -103,23 +103,20 @@ def analyze_repository_intelligence(
                 adj_out[fname].append(call)
                 adj_in[call].append(fname)
                 
-    # Match functions by API path components
-    for ep in endpoints:
-        comp = ep.get("component", "")
-        path = ep.get("path", "")
-        # Very simple match logic similar to call_graph_analysis
-        path_parts = [p for p in path.split('/') if p and not p.startswith(':')]
-        for part in path_parts:
-            part_lower = part.lower()
-            for node in func_names:
-                if node.startswith(f"{comp}.") and part_lower in node.lower():
-                    api_matched.add(node)
-                    
-    matched_entry_points = list(api_matched)
+    # Match functions by API path components - Strategy C
+    entry_points = [
+        node for node in func_names
+        if node.startswith("API:")
+    ]
     
-    # Optional fallback for zero-in-degree if no API matched
-    if not matched_entry_points:
-        matched_entry_points = [n for n in func_names if not adj_in[n]]
+    # Fallback to zero-in-degree nodes if no API nodes exist in the graph
+    if not entry_points:
+        entry_points = [
+            node for node in func_names
+            if not adj_in[node]
+        ]
+        
+    matched_entry_points = entry_points
 
     # Trace execution paths
     reachable_functions = set()
@@ -152,7 +149,7 @@ def analyze_repository_intelligence(
 
     corrected_call_graph = {
         "true_entry_points": sorted(matched_entry_points),
-        "execution_paths": sorted(list(set(execution_paths))[:100]) # Cap to prevent massive JSON string array
+        "execution_paths": sorted(list(set(execution_paths)))[:100] # Cap to prevent massive JSON string array deterministically
     }
     
     dead_function_analysis = {

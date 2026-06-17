@@ -18,8 +18,237 @@ from src.intelligence.data_model_graph import extract_mongoose_models
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _canonicalize_model_name(name: str) -> str:
+    if not name:
+        return name
+    return name[0].upper() + name[1:]
+
+
 def _basename(path: str) -> str:
     return os.path.basename(path)
+
+
+def _resolve_import_path(current_file_path: str, import_path: str, all_files: set[str]) -> str | None:
+    if not import_path.startswith('.'):
+        if '/' in import_path:
+            filename = import_path.split('/')[-1]
+            for f in all_files:
+                f_base = os.path.splitext(os.path.basename(f))[0]
+                if f_base == filename:
+                    return f
+        return None
+
+    base_dir = os.path.dirname(current_file_path)
+    candidate_raw = os.path.normpath(os.path.join(base_dir, import_path))
+    
+    for ext in ['', '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs']:
+        cand = candidate_raw + ext
+        if cand in all_files:
+            return cand
+            
+    for index_name in ['index.js', 'index.ts', 'index.jsx', 'index.tsx']:
+        cand = os.path.join(candidate_raw, index_name)
+        if cand in all_files:
+            return cand
+            
+    return None
+
+
+def _split_by_comma_nested(text: str) -> list[str]:
+    text = text.strip()
+    if text.startswith('[') and text.endswith(']'):
+        text = text[1:-1].strip()
+    
+    parts = []
+    current = []
+    paren_depth = 0
+    bracket_depth = 0
+    for char in text:
+        if char == '(':
+            paren_depth += 1
+        elif char == ')':
+            paren_depth -= 1
+        elif char == '[':
+            bracket_depth += 1
+        elif char == ']':
+            bracket_depth -= 1
+        
+        if char == ',' and paren_depth == 0 and bracket_depth == 0:
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    if current:
+        parts.append("".join(current).strip())
+    
+    final_parts = []
+    for p in parts:
+        if p.startswith('[') and p.endswith(']'):
+            final_parts.extend(_split_by_comma_nested(p))
+        else:
+            if p:
+                final_parts.append(p)
+    return final_parts
+
+
+def _deduplicate_preserve_order(lst: list) -> list:
+    seen = set()
+    result = []
+    for item in lst:
+        if item not in seen:
+            seen.add(item)
+            result.append(item)
+    return result
+
+
+def _resolve_symbol_source_multi(symbol_name: str, file_path: str, all_files: set[str], features_map: dict, visited: set = None) -> list[tuple[str, str]]:
+    if visited is None:
+        visited = set()
+        
+    symbol_clean = symbol_name.split("(")[0].strip() if "(" in symbol_name else symbol_name
+    if not symbol_clean or symbol_clean.startswith("("):
+        return []
+        
+    if "." in symbol_clean:
+        base_symbol = symbol_clean.split(".")[0].strip()
+    else:
+        base_symbol = symbol_clean
+        
+    if (file_path, base_symbol) in visited:
+        return []
+    visited.add((file_path, base_symbol))
+    
+    feats = features_map.get(file_path, {})
+    
+    # 1. Check if base_symbol is a local variable
+    variables = feats.get("variables", [])
+    local_var = None
+    for var in variables:
+        if isinstance(var, dict) and var.get("name") == base_symbol:
+            local_var = var
+            break
+            
+    if local_var:
+        kind = local_var.get("kind")
+        if kind == "call" and local_var.get("callee") == "require":
+            pass
+        elif kind == "array":
+            results = []
+            for elem in local_var.get("elements", []):
+                results.extend(_resolve_symbol_source_multi(elem, file_path, all_files, features_map, visited.copy()))
+            return results
+        elif kind == "call":
+            return _resolve_symbol_source_multi(local_var.get("callee"), file_path, all_files, features_map, visited.copy())
+        elif kind == "identifier":
+            return _resolve_symbol_source_multi(local_var.get("value"), file_path, all_files, features_map, visited.copy())
+        else:
+            val = local_var.get("value", "").strip()
+            if val and val != base_symbol:
+                return _resolve_symbol_source_multi(val, file_path, all_files, features_map, visited.copy())
+
+    # 2. Check if it's imported
+    imports = feats.get("imports", [])
+    matching_imp = None
+    for imp in imports:
+        if isinstance(imp, dict) and imp.get("local") == base_symbol:
+            matching_imp = imp
+            break
+            
+    if matching_imp:
+        source_path_raw = matching_imp.get("source", "")
+        imported_name = matching_imp.get("imported", "")
+        
+        target_file = _resolve_import_path(file_path, source_path_raw, all_files)
+        if not target_file:
+            filename = source_path_raw.split('/')[-1]
+            return [(filename, imported_name)]
+            
+        if imported_name == "default":
+            target_feats = features_map.get(target_file, {})
+            target_exports = target_feats.get("exports", [])
+            local_name = "default"
+            for exp in target_exports:
+                if exp.get("exported") == "default":
+                    local_name = exp.get("local", "default")
+                    break
+            res = _resolve_symbol_source_multi(local_name, target_file, all_files, features_map, visited.copy())
+            if res:
+                return res
+            return [(target_file, local_name)]
+            
+        res = _resolve_symbol_source_multi(imported_name, target_file, all_files, features_map, visited.copy())
+        if res:
+            return res
+        return [(target_file, imported_name)]
+        
+    # 3. Check local functions and classes
+    local_funcs = feats.get("functions", [])
+    local_classes = feats.get("classes", [])
+    if base_symbol in local_funcs or base_symbol in local_classes:
+        return [(file_path, base_symbol)]
+        
+    # 4. Check exports
+    exports = feats.get("exports", [])
+    for exp in exports:
+        if exp.get("exported") == base_symbol:
+            if exp.get("source"):
+                target_file = _resolve_import_path(file_path, exp.get("source"), all_files)
+                if target_file:
+                    res = _resolve_symbol_source_multi(exp.get("local"), target_file, all_files, features_map, visited.copy())
+                    if res:
+                        return res
+                    return [(target_file, exp.get("local"))]
+            else:
+                res = _resolve_symbol_source_multi(exp.get("local"), file_path, all_files, features_map, visited.copy())
+                if res:
+                    return res
+                return [(file_path, exp.get("local"))]
+                
+        if exp.get("exported") == "*":
+            target_file = _resolve_import_path(file_path, exp.get("source"), all_files)
+            if target_file:
+                res = _resolve_symbol_source_multi(base_symbol, target_file, all_files, features_map, visited.copy())
+                if res:
+                    return res
+                    
+    return []
+
+
+def _resolve_symbol_source(symbol_name: str, file_path: str, all_files: set[str], features_map: dict, depth: int = 0) -> tuple[str, str] | None:
+    res = _resolve_symbol_source_multi(symbol_name, file_path, all_files, features_map)
+    if res:
+        return res[0]
+    return None
+
+
+def _qualify_handler_with_imports(handler: str, file_path: str, all_files: set[str], features_map: dict) -> str:
+    if not handler or handler.startswith("("):
+        return handler
+        
+    if "." in handler:
+        parts = handler.split(".", 1)
+        base = parts[0]
+        prop = parts[1]
+        resolved = _resolve_symbol_source(base, file_path, all_files, features_map)
+        if resolved:
+            declaring_file, orig_name = resolved
+            # If the resolved symbol is the default export or namespace, the target property is prop.
+            # E.g. import * as uc from "./ctrl" => uc.getUsers => ctrl.getUsers
+            target_prop = prop if orig_name in ("default", "*") else orig_name
+            ctrl_file = os.path.basename(declaring_file)
+            ctrl_file = re.sub(r"\.(jsx?|tsx?|py)$", "", ctrl_file, flags=re.IGNORECASE)
+            return f"{ctrl_file}.{target_prop}"
+        return handler
+
+    resolved = _resolve_symbol_source(handler, file_path, all_files, features_map)
+    if resolved:
+        declaring_file, orig_name = resolved
+        if declaring_file != file_path:
+            ctrl_file = os.path.basename(declaring_file)
+            ctrl_file = re.sub(r"\.(jsx?|tsx?|py)$", "", ctrl_file, flags=re.IGNORECASE)
+            return f"{ctrl_file}.{orig_name}"
+        
+    return handler
 
 
 def _module_key(path: str) -> str:
@@ -214,6 +443,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
     """
     # Build file→component index for component mapping.
     file_to_component: dict[str, str] = {}
+    all_files = set(file_paths)
     for comp in components:
         for f in comp.get("files", []):
             file_to_component[f] = comp["name"]
@@ -238,6 +468,13 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
         for edge in edges:
             incoming.setdefault(edge.child, []).append(edge)
 
+        dormant_files = set()
+        if has_mount_edges:
+            for fp, symbols in router_symbols_by_file.items():
+                if symbols:
+                    if not any(RouterIdentity(fp, s) in incoming for s in symbols):
+                        dormant_files.add(fp)
+
         memo: dict[RouterIdentity, list[tuple[str, tuple[str, ...]]]] = {}
         active: set[RouterIdentity] = set()
 
@@ -260,7 +497,9 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                 ),
             )
             if not edges_in:
-                if identity.router_symbol == "__root__" or not has_mount_edges:
+                if identity.file_path in dormant_files:
+                    contexts = []
+                elif identity.router_symbol == "__root__" or not has_mount_edges:
                     contexts = [("", tuple())]
                 else:
                     contexts = []
@@ -521,13 +760,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
 
                 # Qualify handler with controller file from import
                 if handler and "." not in handler and not handler.startswith("("):
-                    m_imp = re.search(r"(?:const|let|var)\s+[^;'\"=]*?\b" + re.escape(handler) + r"\b[^;'\"=]*?=\s*require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", content)
-                    if not m_imp:
-                        m_imp = re.search(r"import\s+[^;'\"=]*?\b" + re.escape(handler) + r"\b[^;'\"=]*?from\s+['\"]([^'\"]+)['\"]", content)
-                    if m_imp:
-                        ctrl_file = _basename(m_imp.group(1))
-                        ctrl_file = re.sub(r"\.(jsx?|tsx?)$", "", ctrl_file, flags=re.IGNORECASE)
-                        handler = f"{ctrl_file}.{handler}"
+                    handler = _qualify_handler_with_imports(handler, path, all_files, features_map)
 
                 # Resolve full path with mount prefixes.
                 full_paths = []
@@ -581,6 +814,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                         "router_file": path,
                         "source_file": path,
                         "line": line_num,
+                        "middleware": [],
                     }
                     if auth_required:
                         entry["auth_required"] = True
@@ -613,6 +847,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                         "router_file": path,
                         "source_file": path,
                         "line": line_num,
+                        "middleware": [],
                     }
                 )
 
@@ -644,6 +879,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                         "router_file": path,
                         "source_file": path,
                         "line": line_num,
+                        "middleware": [],
                     }
                 )
 
@@ -731,6 +967,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                         "source_file": path,
                         "line": line_num,
                         "auth_required": False,
+                        "middleware": [],
                     }
                 )
 
@@ -754,18 +991,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
 
             # Snap-dish constraint: fully qualify controller methods if raw name
             if handler and "." not in handler and not handler.startswith("("):
-                content = read_file(path) or ""
-                # Try ES6 import: import { deleteAddress } from "../controllers/addressController.js"
-                m = re.search(r"import\s+[^;'\"=]*?\b" + re.escape(handler) + r"\b[^;'\"=]*?from\s+['\"]([^'\"]+)['\"]", content)
-                # Try CommonJS: const { deleteAddress } = require("../controllers/addressController")
-                if not m:
-                    m = re.search(r"(?:const|let|var)\s+[^;'\"=]*?\b" + re.escape(handler) + r"\b[^;'\"=]*?=\s*require\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", content)
-                if m:
-                    imported_path = m.group(1)
-                    controller_file = _basename(imported_path)
-                    # Strip extension
-                    controller_file = re.sub(r"\.(jsx?|tsx?)$", "", controller_file, flags=re.IGNORECASE)
-                    handler = f"{controller_file}.{handler}"
+                handler = _qualify_handler_with_imports(handler, path, all_files, features_map)
             
             # Sanitize bare lambdas for documentation stability
             if not handler or re.match(r'^(async\s+)?(function\b|\()', handler.strip()):
@@ -794,9 +1020,40 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
             # Fix 2: Detect authentication middleware
             _AUTH_KEYWORDS = {"protect", "auth", "authenticate", "verifytoken", "jwt"}
             middleware = ep.get("middleware", []) or []
+            qualified_mws = []
+            for mw in middleware:
+                sub_tokens = _split_by_comma_nested(mw)
+                for sub_tok in sub_tokens:
+                    sub_tok_clean = sub_tok.split("(")[0].strip() if "(" in sub_tok else sub_tok
+                    if not sub_tok_clean or sub_tok_clean.startswith("("):
+                        continue
+                        
+                    if "." in sub_tok_clean:
+                        base = sub_tok_clean.split(".")[0].strip()
+                    else:
+                        base = sub_tok_clean
+                        
+                    resolved_list = _resolve_symbol_source_multi(base, path, all_files, features_map)
+                    if resolved_list:
+                        for resolved_file, orig_name in resolved_list:
+                            b_name = os.path.basename(resolved_file)
+                            b_name = re.sub(r"\.(jsx?|tsx?|py)$", "", b_name, flags=re.IGNORECASE)
+                            if orig_name in ("default", "*"):
+                                if "." in sub_tok_clean:
+                                    prop = sub_tok_clean.split(".", 1)[1]
+                                    qualified_mws.append(f"{b_name}.{prop}")
+                                else:
+                                    qualified_mws.append(b_name)
+                            else:
+                                qualified_mws.append(f"{b_name}.{orig_name}")
+                    else:
+                        qualified_mws.append(sub_tok_clean)
+
+            qualified_mws = _deduplicate_preserve_order(qualified_mws)
+
             auth_required = any(
                 any(kw in mw.lower() for kw in _AUTH_KEYWORDS)
-                for mw in middleware
+                for mw in qualified_mws
             )
 
             component = file_to_component.get(path)
@@ -844,6 +1101,7 @@ def _build_apis(file_paths: list[str], features_map: dict[str, dict],
                     "router_file": path,
                     "source_file": path,
                     "line": line,
+                    "middleware": qualified_mws,
                 }
                 if auth_required:
                     entry["auth_required"] = True
@@ -893,20 +1151,20 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
                 })
 
         # Mongoose models with full schema fields.
-        mongoose_models = extract_mongoose_models(content) if lower.endswith((".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")) else []
+        mongoose_models = extract_mongoose_models(content, path) if lower.endswith((".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")) else []
         if not mongoose_models:
             mongoose_names = set()
             for tag in tags:
                 if tag.startswith("MONGOOSE_MODEL:"):
-                    mongoose_names.add(tag.split(":", 1)[1])
+                    mongoose_names.add(_canonicalize_model_name(tag.split(":", 1)[1]))
             if any(t == "MONGOOSE_SCHEMA" for t in tags):
                 for match in MONGOOSE_MODEL_RX.finditer(content):
-                    mongoose_names.add(match.group(1))
+                    mongoose_names.add(_canonicalize_model_name(match.group(1)))
             for name in sorted(mongoose_names):
                 mongoose_models.append({"name": name, "fields": {}, "relationships": []})
 
         for model in mongoose_models:
-            model_name = str(model.get("name", "")).strip()
+            model_name = _canonicalize_model_name(str(model.get("name", "")).strip())
             if not model_name:
                 continue
             fields = model.get("fields", {}) if isinstance(model.get("fields"), dict) else {}
@@ -928,7 +1186,7 @@ def _build_entities(file_paths: list[str], features_map: dict[str, dict],
 
             for rel in model.get("relationships", []):
                 field_name = str(rel.get("field", "")).strip()
-                ref_model = str(rel.get("ref", "")).strip()
+                ref_model = _canonicalize_model_name(str(rel.get("ref", "")).strip())
                 if not field_name or not ref_model:
                     continue
                 schema_edges.append({
@@ -1705,7 +1963,13 @@ def _build_relationships(components: list[dict],
             # IMPORTS_MODULE: Cross reference based on AST imports mapping or string file path presence
             imports = features_map.get(file_path, {}).get("imports", [])
             for imp in imports:
-                imp_name = os.path.splitext(os.path.basename(imp))[0]
+                if isinstance(imp, dict):
+                    imp_source = imp.get("source", "")
+                else:
+                    imp_source = imp
+                if not imp_source:
+                    continue
+                imp_name = os.path.splitext(os.path.basename(imp_source))[0]
                 if imp_name:
                     relationships.append({
                         "type": "IMPORTS_MODULE",

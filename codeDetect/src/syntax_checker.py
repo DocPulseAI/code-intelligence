@@ -112,7 +112,7 @@ class SyntaxChecker:
         if errors and isinstance(errors[0], dict):
             first = errors[0]
             return {
-                "type": first.get("type", "SyntaxError"),
+                "type": "SyntaxError",
                 "message": "Tree-sitter reported syntax errors",
                 "line": first.get("start_line"),
                 "column": first.get("start_col"),

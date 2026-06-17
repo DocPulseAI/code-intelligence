@@ -51,6 +51,14 @@ def analyze_call_graph(call_graph: List[Dict[str, Any]], repository_evidence: Di
 
     # 3. Trace Execution Paths (Entry Point -> DB/Infra)
     infra_keywords = ("prisma", "mongoose", "db.", "client.", "mongodb", "entitymanager", "repository")
+    
+    # Collect all entity names from repository evidence
+    entity_names = set()
+    for ent in repository_evidence.get("entities", []):
+        name = ent.get("name")
+        if name:
+            entity_names.add(name.lower())
+            
     execution_paths = []
 
     def find_paths_to_infra(u, current_path, depth):
@@ -58,7 +66,16 @@ def analyze_call_graph(call_graph: List[Dict[str, Any]], repository_evidence: Di
             return
 
         # Check if current node is infra
-        if any(kw in u.lower() for kw in infra_keywords):
+        is_infra = any(kw in u.lower() for kw in infra_keywords)
+        if not is_infra:
+            # Also check if any part of the dot-split string is in entity names
+            if "." in u:
+                for part in u.split("."):
+                    if part.lower() in entity_names:
+                        is_infra = True
+                        break
+
+        if is_infra:
             execution_paths.append(current_path + [u])
             return
 
@@ -70,6 +87,7 @@ def analyze_call_graph(call_graph: List[Dict[str, Any]], repository_evidence: Di
         find_paths_to_infra(entry, [], 0)
 
     # 4. Dead Functions: defined but never called by any other function
+    from src.intelligence.call_graph_engine import get_file_layer
     all_defined = set()
     for file_path, ev in repository_evidence.get("file_evidence", {}).items():
         module = "unknown"
@@ -77,14 +95,23 @@ def analyze_call_graph(call_graph: List[Dict[str, Any]], repository_evidence: Di
             if file_path in mod.get("files", []):
                 module = mod["name"]
                 break
+        layer = get_file_layer(file_path)
         for func in ev.get("functions", []):
-            all_defined.add(f"{module}.{func}")
+            all_defined.add(f"{module}.{layer}.{func}")
 
-    called_functions: Set[str] = set()
-    for callees in adj.values():
-        called_functions.update(callees)
+    # Reachability-based dead functions analysis
+    reachable = set()
+    queue = list(entry_points)
+    visited = set(entry_points)
+    while queue:
+        u = queue.pop(0)
+        reachable.add(u)
+        for v in adj.get(u, []):
+            if v not in visited:
+                visited.add(v)
+                queue.append(v)
 
-    dead_functions = sorted(list(all_defined - called_functions))
+    dead_functions = sorted(list(all_defined - reachable))
 
     # 5. Max Call Depth from any entry point
     memo: Dict[str, int] = {}

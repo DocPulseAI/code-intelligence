@@ -51,7 +51,10 @@ class JSParser:
 
         # Backward compatibility with previous key name.
         if "dependencies" not in features and isinstance(features.get("imports"), list):
-            features["dependencies"] = features["imports"]
+            if features["imports"] and isinstance(features["imports"][0], dict):
+                features["dependencies"] = sorted(list(set(imp["source"] for imp in features["imports"] if isinstance(imp, dict) and "source" in imp)))
+            else:
+                features["dependencies"] = features["imports"]
 
         if "api_endpoints" not in features and isinstance(features.get("api_routes"), list):
             features["api_endpoints"] = [
@@ -70,6 +73,18 @@ class JSParser:
             funcs.update(
                 re.findall(
                     r"\b(?:const|let|var)\s+([A-Za-z_]\w*)\s*=\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>",
+                    text,
+                )
+            )
+            funcs.update(
+                re.findall(
+                    r"\b([A-Za-z_]\w*)\s*=\s*(?:[A-Za-z_]\w*\s*\()?\s*(?:async\s*)?\([^)]*\)\s*(?::\s*[^=]+)?\s*=>",
+                    text,
+                )
+            )
+            funcs.update(
+                re.findall(
+                    r"\b([A-Za-z_]\w*)\s*=\s*asyncHandler\s*\(",
                     text,
                 )
             )

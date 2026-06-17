@@ -407,8 +407,11 @@ def main():
                 # Collect endpoints
                 endpoints = features.get("api_endpoints", []) or features.get("api_routes", []) or []
                 for ep in endpoints:
+                    method = (ep.get("verb") or ep.get("method") or "GET").upper()
+                    if method == "USE":
+                        continue
                     all_endpoints.append({
-                        "method": ep.get("verb") or ep.get("method") or "GET",
+                        "method": method,
                         "path": ep.get("route") or ep.get("path") or "",
                         "source_file": path,
                         "line": ep.get("line", 0),
@@ -876,8 +879,8 @@ def main():
                     key = f"{method} {path}"
 
                     if key in seen_endpoints:
-                        LOG.error(f"Validation Error: Duplicate endpoint found - {key}")
-                        sys.exit(2)
+                        LOG.warning(f"Validation Warning: Duplicate endpoint found - {key}")
+                        continue
                     seen_endpoints.add(key)
 
                     if not api.get("controller"):

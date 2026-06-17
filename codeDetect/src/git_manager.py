@@ -286,7 +286,8 @@ class GitManager:
 
     def get_file_content(self, file_path: str, ref: str = "HEAD") -> Optional[str]:
         """
-        Safely retrieve file content from a specific git reference.
+        Safely retrieve file content from a specific git reference,
+        with a filesystem fallback if the file is untracked or inside a submodule.
 
         Args:
             file_path: Path to file within repository
@@ -295,16 +296,32 @@ class GitManager:
         Returns:
             File content as string, empty string if missing, or None for binary/decode issues
         """
+        # 1. Attempt Git retrieval
         try:
             return self.repo.git.show(f"{ref}:{file_path}")
         except GitCommandError:
-            # File might not exist at this ref
-            return ""
+            # File might not be tracked or commit might not exist at this ref
+            pass
         except UnicodeDecodeError:
             # Binary file content that cannot be decoded safely
             return None
         except Exception:
-            return ""
+            pass
+
+        # 2. Filesystem fallback
+        local_path = os.path.join(self.repo_path, file_path)
+        if os.path.isfile(local_path):
+            try:
+                with open(local_path, "rb") as f:
+                    content_bytes = f.read()
+                try:
+                    return content_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    return None
+            except Exception:
+                return ""
+
+        return ""
 
     def get_diff_content(self, file_path: str) -> Optional[str]:
         """

@@ -114,7 +114,13 @@ def build_symbol_graph(report: dict) -> dict:
                 )
                 _add_node(nodes, node)
 
-        for imported in sorted(str(i) for i in features.get("imports", []) if str(i).strip()):
+        import_strings = []
+        for i in features.get("imports", []):
+            if isinstance(i, dict):
+                import_strings.append(i.get("source", ""))
+            else:
+                import_strings.append(str(i))
+        for imported in sorted(set(imp for imp in import_strings if imp.strip())):
             target_sig = f"import:{imported}"
             target_id = _symbol_id(f"__import__/{imported}", target_sig)
             target_node = SymbolNode(

@@ -47,6 +47,11 @@ def _find_matching(text: str, open_idx: int, open_ch: str, close_ch: str) -> int
         i += 1
     return -1
 
+def _canonicalize_model_name(name: str) -> str:
+    if not name:
+        return name
+    return name[0].upper() + name[1:]
+
 
 def _split_top_level(raw: str, sep: str = ",") -> list[str]:
     out: list[str] = []
@@ -275,9 +280,9 @@ def _parse_object_field(body: str) -> dict[str, Any]:
     }
     if "ref" in props:
         ref_value = props.get("ref", "")
-        field["ref"] = _strip_quotes(ref_value)
+        field["ref"] = _canonicalize_model_name(_strip_quotes(ref_value))
     elif ref_model:
-        field["ref"] = ref_model
+        field["ref"] = _canonicalize_model_name(ref_model)
     return field
 
 
@@ -372,10 +377,86 @@ def _infer_model_name_from_schema_var(schema_var: str) -> str:
     return base[:1].upper() + base[1:]
 
 
-def extract_mongoose_models(content: str) -> list[dict[str, Any]]:
+def _has_schema_reference(field_meta: dict, schema_var: str) -> bool:
+    """Recursively check if a schema variable is referenced in field metadata."""
+    if schema_var in str(field_meta.get("type", "")):
+        return True
+    nested = field_meta.get("nested_fields", {})
+    for sub_meta in nested.values():
+        if _has_schema_reference(sub_meta, schema_var):
+            return True
+    return False
+
+
+def extract_mongoose_models(content: str, file_path: str | None = None) -> list[dict[str, Any]]:
     """
     Extract mongoose models with full schema fields.
     """
+    try:
+        import os
+        from src.parsers.tree_sitter_engine import parse_code
+        ext = ".js"
+        if file_path:
+            ext = os.path.splitext(file_path)[1].lower() or ".js"
+        parsed = parse_code(content, ext)
+        if parsed.get("ast_available") and parsed.get("features"):
+            features = parsed["features"]
+            ast_schemas = features.get("mongoose_schemas", {})
+            ast_models = features.get("mongoose_models", [])
+            
+            if ast_schemas or ast_models:
+                models: list[dict[str, Any]] = []
+                seen_model_names: set[str] = set()
+                
+                # Process explicit model registrations
+                for m in ast_models:
+                    model_name = m["name"]
+                    schema_var = m["schema_var"]
+                    fields = ast_schemas.get(schema_var) or {}
+                    relationships = sorted(
+                        [
+                            {"field": f_name, "ref": _canonicalize_model_name(f_meta["ref"])}
+                            for f_name, f_meta in fields.items()
+                            if isinstance(f_meta, dict) and f_meta.get("ref")
+                        ],
+                        key=lambda x: (x["field"], x["ref"]),
+                    )
+                    models.append({"name": model_name, "fields": fields, "relationships": relationships})
+                    seen_model_names.add(model_name)
+                
+                # Identify embedded subdocument schemas in the same file
+                referenced_schemas = set()
+                for other_var, fields in ast_schemas.items():
+                    for f_name, f_meta in fields.items():
+                        for s_var in ast_schemas.keys():
+                            if s_var != other_var and _has_schema_reference(f_meta, s_var):
+                                referenced_schemas.add(s_var)
+                                
+                # Process fallback schemas
+                for schema_var, fields in sorted(ast_schemas.items(), key=lambda kv: kv[0]):
+                    if schema_var in referenced_schemas:
+                        continue
+                    if schema_var.startswith("__inline_schema_"):
+                        continue
+                    fallback_name = _canonicalize_model_name(_infer_model_name_from_schema_var(schema_var))
+                    if fallback_name in seen_model_names:
+                        continue
+                    relationships = sorted(
+                        [
+                            {"field": f_name, "ref": _canonicalize_model_name(f_meta["ref"])}
+                            for f_name, f_meta in fields.items()
+                            if isinstance(f_meta, dict) and f_meta.get("ref")
+                        ],
+                        key=lambda x: (x["field"], x["ref"]),
+                    )
+                    models.append({"name": fallback_name, "fields": fields, "relationships": relationships})
+                    seen_model_names.add(fallback_name)
+                    
+                models.sort(key=lambda row: row["name"])
+                return models
+    except Exception as e:
+        print(f"Warning: Mongoose AST extraction failed: {e}. Falling back to regex.")
+
     schema_fields_by_var: dict[str, dict[str, dict[str, Any]]] = {}
 
     for m in SCHEMA_DECL_RX.finditer(content):
@@ -402,13 +483,13 @@ def extract_mongoose_models(content: str) -> list[dict[str, Any]]:
         schema_expr = args[1].strip()
         if not _is_string_literal(model_name_expr):
             continue
-        model_name = _strip_quotes(model_name_expr)
+        model_name = _canonicalize_model_name(_strip_quotes(model_name_expr))
         if not model_name:
             continue
         fields = schema_fields_by_var.get(schema_expr) or _extract_inline_schema_fields(schema_expr)
         relationships = sorted(
             [
-                {"field": f_name, "ref": f_meta["ref"]}
+                {"field": f_name, "ref": _canonicalize_model_name(f_meta["ref"])}
                 for f_name, f_meta in fields.items()
                 if isinstance(f_meta, dict) and f_meta.get("ref")
             ],
@@ -417,14 +498,24 @@ def extract_mongoose_models(content: str) -> list[dict[str, Any]]:
         models.append({"name": model_name, "fields": fields, "relationships": relationships})
         seen_model_names.add(model_name)
 
+    # Identify embedded subdocument schemas in the same file
+    referenced_schemas = set()
+    for other_var, fields in schema_fields_by_var.items():
+        for f_name, f_meta in fields.items():
+            for s_var in schema_fields_by_var.keys():
+                if s_var != other_var and _has_schema_reference(f_meta, s_var):
+                    referenced_schemas.add(s_var)
+
     # Fallback: schema declaration without explicit model() call.
     for schema_var, fields in sorted(schema_fields_by_var.items(), key=lambda kv: kv[0]):
-        fallback_name = _infer_model_name_from_schema_var(schema_var)
+        if schema_var in referenced_schemas:
+            continue
+        fallback_name = _canonicalize_model_name(_infer_model_name_from_schema_var(schema_var))
         if fallback_name in seen_model_names:
             continue
         relationships = sorted(
             [
-                {"field": f_name, "ref": f_meta["ref"]}
+                {"field": f_name, "ref": _canonicalize_model_name(f_meta["ref"])}
                 for f_name, f_meta in fields.items()
                 if isinstance(f_meta, dict) and f_meta.get("ref")
             ],
@@ -479,7 +570,7 @@ def build_data_model(file_paths: list[str], read_file: Callable[[str], str | Non
             continue
 
         if lower.endswith((".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs")):
-            for model in extract_mongoose_models(content):
+            for model in extract_mongoose_models(content, path):
                 name = model["name"]
                 fields = model.get("fields", {})
                 entities[name] = {

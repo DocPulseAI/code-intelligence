@@ -30,6 +30,8 @@ def _symbol_owner(value: str) -> str:
     if not token:
         return ""
     parts = [p for p in token.split(".") if p]
+    if len(parts) >= 3:
+        return parts[0]
     if len(parts) >= 2:
         return parts[-2]
     return parts[0] if parts else ""

@@ -1,1 +1,690 @@
-{"analysis_summary":{"breaking_changes_detected":false,"highest_severity":"PATCH","total_files":2},"baseline_commit":null,"branch":"main","breaking_changes":[],"commit_sha":"84c2190f2b62262be663d3f4e7557313f1fee368","deterministic":true,"meta":{"generated_at":"2024-01-01T05:30:00","tool_version":"1.0.0"},"project_id":"non_express_fastapi","report":{"affected_packages":["fastapi"],"analysis_summary":{"breaking_changes_detected":false,"highest_severity":"PATCH","severity_distribution":{"MAJOR":0,"MINOR":0,"PATCH":2},"total_files":2,"total_files_analyzed":2},"api_contract":{"endpoints":[]},"api_summary":{"added":0,"modified":0,"removed":0},"api_surface":[],"architecture":{"external_dependencies":[],"layers":[],"pattern":"modular monolith"},"architecture_insights":{"dependency_insights":{"circular_dependencies":[],"high_fan_in_modules":[],"unstable_modules":["main"]},"layer_violations":[],"module_centrality":[],"tightly_coupled_modules":[]},"architecture_reconstruction":{"components":[],"edges":[],"layers":[],"pattern":"Layered Architecture"},"breaking_change_details":[],"call_graph":[],"call_graph_analysis":{"dead_functions":["main.get_user"],"entry_points":[],"execution_paths":[],"max_call_depth":0},"change_complexity_score":0.2,"change_summary":"fixture","changes":[{"change_type":"ADDED","component":"backend","features":{"api_endpoints":[],"calls":[],"classes":[],"decorators":["app.get('/users/{user_id}')"],"dependencies":["fastapi"],"functions":["get_user"],"imports":[],"router_prefixes_resolved":{}},"file":"main.py","schema_tags":[],"severity":"PATCH"},{"change_type":"ADDED","component":"backend","features":{},"file":"requirements.txt","schema_tags":[],"severity":"PATCH"}],"code_intelligence":{"call_graph":{"edges":[],"nodes":[]},"dependency_graph":{"circular_dependencies":[],"cycle_detected":false,"dependencies":[],"modules":["main","requirements"]},"repository_graph":{"edges":[],"nodes":[{"id":"main","type":"module"},{"id":"requirements","type":"module"}]},"symbol_index":[{"file":"main.py","line":5,"name":"get_user","type":"function"}]},"context":{"author":"Deterministic Bot","author_email":"deterministic@example.com","branch":"main","commit_sha":"84c2190f2b62262be663d3f4e7557313f1fee368","commit_timestamp":"2024-01-01T05:30:00","full_sha":"84c2190f2b62262be663d3f4e7557313f1fee368","generated_at":"2024-01-01T05:30:00","repository":"non_express_fastapi"},"corrected_call_graph":{"execution_paths":[],"true_entry_points":[]},"data_model":{"entities":[],"relationships":[]},"database_impact":{"model_count":0,"models":[],"schema_changed":false,"tables_affected":[]},"dead_function_analysis":{"count":0,"true_dead_functions":[]},"dependency_analysis":{"core_modules":[],"cycles":[],"graph_metrics":{"max_dependency_depth":1,"node_metrics":{"fastapi":{"centrality":0.5,"fan_in":1,"fan_out":0,"instability":0.0},"main":{"centrality":0.5,"fan_in":0,"fan_out":1,"instability":1.0},"requirements":{"centrality":0.0,"fan_in":0,"fan_out":0,"instability":0.0}}},"high_coupling_modules":[]},"dependency_classification":{"dev_dependencies":[],"external_dependencies":["fastapi"],"internal_modules":[],"static_assets":[]},"dependency_graph":{"analysis":{"cycle_detected":false,"cycles":[]},"edges":[{"from":"main","to":"fastapi","type":"external"}],"nodes":[{"id":"fastapi","type":"external_package"},{"id":"main","type":"internal_module"},{"id":"requirements","type":"internal_module"}]},"doc_contract":{"requires_adr":false,"requires_api_reference":true,"requires_architecture_doc":true,"requires_readme":true},"documentation_contract":{"requires_adr":false,"requires_api_reference":true,"requires_architecture_doc":true,"requires_readme":true},"files":[{"change_type":"ADDED","component":"backend","features":{"api_endpoints":[],"calls":[],"classes":[],"decorators":["app.get('/users/{user_id}')"],"dependencies":["fastapi"],"functions":["get_user"],"imports":[],"router_prefixes_resolved":{}},"path":"main.py","severity":"PATCH"},{"change_type":"ADDED","component":"backend","features":{},"path":"requirements.txt","severity":"PATCH"}],"impact_analysis":{"impact_analysis":{"affected_components":[],"blast_radius":2,"changed_components":["main","requirements"],"metrics":{"api_changes":0,"call_chain_depth":0,"db_changes":0,"module_changes":2},"risk_score":4.0,"severity":"MINOR"}},"impact_propagation":{"affected_callers":[],"affected_modules":["fastapi","main","requirements"],"blast_radius":3,"changed_files":[{"change_type":"ADDED","component":"backend","features":{"api_endpoints":[],"calls":[],"classes":[],"decorators":["app.get('/users/{user_id}')"],"dependencies":["fastapi"],"functions":["get_user"],"imports":[],"router_prefixes_resolved":{}},"file":"main.py","schema_tags":[],"severity":"PATCH"},{"change_type":"ADDED","component":"backend","features":{},"file":"requirements.txt","schema_tags":[],"severity":"PATCH"}]},"infra_analysis":{"ci_workflow":null,"docker":false},"quality_warnings":["QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)","QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)"],"repository_evidence":{"api_mounts":[],"apis":[],"components":[{"files":["main.py"],"framework":"fastapi","name":"main","path":"","type":"backend_module"},{"files":["requirements.txt"],"framework":"fastapi","name":"requirements","path":"","type":"backend_module"}],"entities":[],"file_evidence":{"main.py":{"api_endpoints":[],"calls":[],"classes":[],"decorators":["app.get('/users/{user_id}')"],"dependencies":["fastapi"],"functions":["get_user"],"imports":[],"router_prefixes_resolved":{}},"requirements.txt":{}},"frontend_routes":[],"modules":[{"files":["main.py"],"framework":"fastapi","name":"main","path":"","type":"backend_module"},{"files":["requirements.txt"],"framework":"fastapi","name":"requirements","path":"","type":"backend_module"}],"mounts":[],"quality_warnings":["QUALITY_WARNING: endpoint_count=0 (no API endpoints detected)"],"relationships":[],"repositories":[],"routers":[],"services":[],"tech_stack":{"backend":["fastapi"],"database":[],"frontend":[],"infrastructure":[]}},"repository_type":"backend-service","risk_analysis":{"blast_radius":"LOCAL","migration_required":false,"operational_risk":"LOW","test_scope":["unit"]},"schema_analysis":{"models":[],"models_detected":0,"relationships":[]},"search_index":{"apis":[],"modules":[{"dependencies":["fastapi"],"file":"main.py","name":"main","type":"backend"},{"dependencies":[],"file":"requirements.txt","name":"requirements","type":"backend"}],"references":[],"symbols":[{"file":"main.py","line":5,"module":"main","name":"get_user","type":"function"}]},"summary":"Analyzed 2 files: 0 endpoints, 0 breaking changes, stack=fastapi","tech_stack":{"backend_framework":"fastapi","ci":[],"database":null,"frontend_framework":null,"infra":[],"orm":null}},"schema_version":"epic1-impact/v3","severity":"PATCH","statistics":{"major":0,"minor":0,"patch":0,"total_changes":0},"status":"success","version":"1.0.0"}
+{
+  "analysis_summary": {
+    "breaking_changes_detected": false,
+    "highest_severity": "MAJOR",
+    "total_files": 2
+  },
+  "baseline_commit": null,
+  "branch": "main",
+  "breaking_changes": [],
+  "commit_sha": "84c2190f2b62262be663d3f4e7557313f1fee368",
+  "deterministic": true,
+  "meta": {
+    "generated_at": "2024-01-01T05:30:00",
+    "tool_version": "1.0.0"
+  },
+  "project_id": "non_express_fastapi",
+  "report": {
+    "affected_packages": [
+      "fastapi"
+    ],
+    "analysis_summary": {
+      "breaking_changes_detected": false,
+      "highest_severity": "MAJOR",
+      "severity_distribution": {
+        "MAJOR": 1,
+        "MINOR": 0,
+        "PATCH": 1
+      },
+      "total_files": 2,
+      "total_files_analyzed": 2
+    },
+    "api_contract": {
+      "endpoints": [
+        {
+          "auth": {
+            "required": false,
+            "type": "unknown"
+          },
+          "component": "main",
+          "confidence": 0.8,
+          "controller": "get_user",
+          "description": "",
+          "endpoint_hash": "1615b6007109676fb14a254f7040d90cdf082c3c828f070a940c4c2a985fbb30",
+          "example": {},
+          "line": 4,
+          "method": "GET",
+          "normalized_key": "get /users/{user_id}",
+          "operation_id": "getUsersUser_id",
+          "path": "/users/{user_id}",
+          "request": {
+            "body_schema": null,
+            "headers": [],
+            "path_params": [],
+            "query_params": []
+          },
+          "responses": [],
+          "router_file": "main.py",
+          "source": {
+            "controller": "get_user"
+          },
+          "source_file": "main.py",
+          "summary": "",
+          "tags": [
+            "main"
+          ],
+          "warnings": []
+        }
+      ]
+    },
+    "api_summary": {
+      "added": 0,
+      "modified": 0,
+      "removed": 0
+    },
+    "api_surface": [
+      {
+        "auth_required": false,
+        "controller": "get_user",
+        "method": "GET",
+        "path": "/users/{user_id}",
+        "request_schema_hash": "456e42238c3721627d129a5d6aa2a6ccdf2a2462f31a6b6901ddc01d24538d90",
+        "response_schema_hash": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    ],
+    "architecture": {
+      "external_dependencies": [],
+      "layers": [],
+      "pattern": "modular monolith"
+    },
+    "architecture_insights": {
+      "dependency_insights": {
+        "circular_dependencies": [],
+        "high_fan_in_modules": [],
+        "unstable_modules": [
+          "main"
+        ]
+      },
+      "layer_violations": [],
+      "module_centrality": [],
+      "tightly_coupled_modules": []
+    },
+    "architecture_reconstruction": {
+      "components": [],
+      "edges": [],
+      "layers": [],
+      "pattern": "Layered Architecture"
+    },
+    "breaking_change_details": [],
+    "call_graph": [
+      {
+        "caller": "API: GET /users/{user_id}",
+        "calls": [
+          "main.other.get_user"
+        ]
+      }
+    ],
+    "call_graph_analysis": {
+      "dead_functions": [],
+      "entry_points": [
+        "API: GET /users/{user_id}"
+      ],
+      "execution_paths": [],
+      "max_call_depth": 1
+    },
+    "change_complexity_score": 0.2,
+    "change_summary": "fixture",
+    "changes": [
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_endpoints": [
+            {
+              "decorator": "@app.get('/users/{user_id}')",
+              "handler": "get_user",
+              "line": 4,
+              "route": "/users/{user_id}",
+              "router_symbol": "app",
+              "verb": "GET"
+            }
+          ],
+          "api_routes": [],
+          "calls": [],
+          "classes": [],
+          "comments": [],
+          "complexity_nodes": 0,
+          "decorators": [
+            "app.get('/users/{user_id}')"
+          ],
+          "dependencies": [
+            "fastapi"
+          ],
+          "docstrings": [],
+          "functions": [
+            "get_user"
+          ],
+          "imports": [
+            "from fastapi import FastAPI"
+          ],
+          "router_prefixes_resolved": {}
+        },
+        "file": "main.py",
+        "schema_tags": [],
+        "severity": "MAJOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {},
+        "file": "requirements.txt",
+        "schema_tags": [],
+        "severity": "PATCH"
+      }
+    ],
+    "code_intelligence": {
+      "call_graph": {
+        "edges": [
+          {
+            "from": "API: GET /users/{user_id}",
+            "to": "main.other.get_user"
+          }
+        ],
+        "nodes": [
+          "API: GET /users/{user_id}",
+          "main.other.get_user"
+        ]
+      },
+      "dependency_graph": {
+        "circular_dependencies": [],
+        "cycle_detected": false,
+        "dependencies": [],
+        "modules": [
+          "main",
+          "requirements"
+        ]
+      },
+      "repository_graph": {
+        "edges": [
+          {
+            "from": "GET /users/{user_id}",
+            "to": "get_user",
+            "type": "calls"
+          }
+        ],
+        "nodes": [
+          {
+            "id": "GET /users/{user_id}",
+            "type": "api"
+          },
+          {
+            "id": "get_user",
+            "type": "controller"
+          },
+          {
+            "id": "main",
+            "type": "module"
+          },
+          {
+            "id": "requirements",
+            "type": "module"
+          }
+        ]
+      },
+      "symbol_index": [
+        {
+          "file": "main.py",
+          "line": 4,
+          "name": "GET /users/{user_id}",
+          "type": "route"
+        },
+        {
+          "file": "main.py",
+          "line": 4,
+          "name": "get_user",
+          "type": "controller"
+        },
+        {
+          "file": "main.py",
+          "line": 5,
+          "name": "get_user",
+          "type": "function"
+        }
+      ]
+    },
+    "context": {
+      "author": "Deterministic Bot",
+      "author_email": "deterministic@example.com",
+      "branch": "main",
+      "commit_sha": "84c2190f2b62262be663d3f4e7557313f1fee368",
+      "commit_timestamp": "2024-01-01T05:30:00",
+      "full_sha": "84c2190f2b62262be663d3f4e7557313f1fee368",
+      "generated_at": "2024-01-01T05:30:00",
+      "repository": "non_express_fastapi"
+    },
+    "corrected_call_graph": {
+      "execution_paths": [
+        "API: GET /users/{user_id} -> main.other.get_user"
+      ],
+      "true_entry_points": [
+        "API: GET /users/{user_id}"
+      ]
+    },
+    "data_model": {
+      "entities": [],
+      "relationships": []
+    },
+    "database_impact": {
+      "model_count": 0,
+      "models": [],
+      "schema_changed": false,
+      "tables_affected": []
+    },
+    "dead_function_analysis": {
+      "count": 0,
+      "true_dead_functions": []
+    },
+    "dependency_analysis": {
+      "core_modules": [],
+      "cycles": [],
+      "graph_metrics": {
+        "max_dependency_depth": 1,
+        "node_metrics": {
+          "fastapi": {
+            "centrality": 0.5,
+            "fan_in": 1,
+            "fan_out": 0,
+            "instability": 0.0
+          },
+          "main": {
+            "centrality": 0.5,
+            "fan_in": 0,
+            "fan_out": 1,
+            "instability": 1.0
+          },
+          "requirements": {
+            "centrality": 0.0,
+            "fan_in": 0,
+            "fan_out": 0,
+            "instability": 0.0
+          }
+        }
+      },
+      "high_coupling_modules": []
+    },
+    "dependency_classification": {
+      "dev_dependencies": [],
+      "external_dependencies": [
+        "fastapi"
+      ],
+      "internal_modules": [],
+      "static_assets": []
+    },
+    "dependency_graph": {
+      "analysis": {
+        "cycle_detected": false,
+        "cycles": []
+      },
+      "edges": [
+        {
+          "from": "main",
+          "to": "fastapi",
+          "type": "external"
+        }
+      ],
+      "nodes": [
+        {
+          "id": "fastapi",
+          "type": "external_package"
+        },
+        {
+          "id": "main",
+          "type": "internal_module"
+        },
+        {
+          "id": "requirements",
+          "type": "internal_module"
+        }
+      ]
+    },
+    "doc_contract": {
+      "requires_adr": false,
+      "requires_api_reference": true,
+      "requires_architecture_doc": true,
+      "requires_readme": true
+    },
+    "documentation_contract": {
+      "requires_adr": false,
+      "requires_api_reference": true,
+      "requires_architecture_doc": true,
+      "requires_readme": true
+    },
+    "files": [
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {
+          "api_endpoints": [
+            {
+              "decorator": "@app.get('/users/{user_id}')",
+              "handler": "get_user",
+              "line": 4,
+              "route": "/users/{user_id}",
+              "router_symbol": "app",
+              "verb": "GET"
+            }
+          ],
+          "api_routes": [],
+          "calls": [],
+          "classes": [],
+          "comments": [],
+          "complexity_nodes": 0,
+          "decorators": [
+            "app.get('/users/{user_id}')"
+          ],
+          "dependencies": [
+            "fastapi"
+          ],
+          "docstrings": [],
+          "functions": [
+            "get_user"
+          ],
+          "imports": [
+            "from fastapi import FastAPI"
+          ],
+          "router_prefixes_resolved": {}
+        },
+        "path": "main.py",
+        "severity": "MAJOR"
+      },
+      {
+        "change_type": "ADDED",
+        "component": "backend",
+        "features": {},
+        "path": "requirements.txt",
+        "severity": "PATCH"
+      }
+    ],
+    "impact_analysis": {
+      "impact_analysis": {
+        "affected_components": [],
+        "blast_radius": 2,
+        "changed_components": [
+          "main",
+          "requirements"
+        ],
+        "metrics": {
+          "api_changes": 0,
+          "call_chain_depth": 0,
+          "db_changes": 0,
+          "module_changes": 2
+        },
+        "risk_score": 4.0,
+        "severity": "MINOR"
+      }
+    },
+    "impact_propagation": {
+      "affected_callers": [
+        "API: GET /users/{user_id}",
+        "main.other.get_user"
+      ],
+      "affected_modules": [
+        "fastapi",
+        "main",
+        "requirements"
+      ],
+      "blast_radius": 5,
+      "changed_files": [
+        {
+          "change_type": "ADDED",
+          "component": "backend",
+          "features": {
+            "api_endpoints": [
+              {
+                "decorator": "@app.get('/users/{user_id}')",
+                "handler": "get_user",
+                "line": 4,
+                "route": "/users/{user_id}",
+                "router_symbol": "app",
+                "verb": "GET"
+              }
+            ],
+            "api_routes": [],
+            "calls": [],
+            "classes": [],
+            "comments": [],
+            "complexity_nodes": 0,
+            "decorators": [
+              "app.get('/users/{user_id}')"
+            ],
+            "dependencies": [
+              "fastapi"
+            ],
+            "docstrings": [],
+            "functions": [
+              "get_user"
+            ],
+            "imports": [
+              "from fastapi import FastAPI"
+            ],
+            "router_prefixes_resolved": {}
+          },
+          "file": "main.py",
+          "schema_tags": [],
+          "severity": "MAJOR"
+        },
+        {
+          "change_type": "ADDED",
+          "component": "backend",
+          "features": {},
+          "file": "requirements.txt",
+          "schema_tags": [],
+          "severity": "PATCH"
+        }
+      ]
+    },
+    "infra_analysis": {
+      "ci_workflow": null,
+      "docker": false
+    },
+    "quality_warnings": [],
+    "repository_evidence": {
+      "api_mounts": [],
+      "apis": [
+        {
+          "controller": "get_user",
+          "line": 4,
+          "method": "GET",
+          "middleware": [],
+          "module": "main",
+          "path": "/users/{user_id}",
+          "router_file": "main.py",
+          "source_file": "main.py"
+        }
+      ],
+      "components": [
+        {
+          "files": [
+            "main.py"
+          ],
+          "framework": "fastapi",
+          "name": "main",
+          "path": "",
+          "type": "backend_module"
+        },
+        {
+          "files": [
+            "requirements.txt"
+          ],
+          "framework": "fastapi",
+          "name": "requirements",
+          "path": "",
+          "type": "backend_module"
+        }
+      ],
+      "entities": [],
+      "file_evidence": {
+        "main.py": {
+          "api_endpoints": [
+            {
+              "decorator": "@app.get('/users/{user_id}')",
+              "handler": "get_user",
+              "line": 4,
+              "route": "/users/{user_id}",
+              "router_symbol": "app",
+              "verb": "GET"
+            }
+          ],
+          "api_routes": [],
+          "calls": [],
+          "classes": [],
+          "comments": [],
+          "complexity_nodes": 0,
+          "decorators": [
+            "app.get('/users/{user_id}')"
+          ],
+          "dependencies": [
+            "fastapi"
+          ],
+          "docstrings": [],
+          "functions": [
+            "get_user"
+          ],
+          "imports": [
+            "from fastapi import FastAPI"
+          ],
+          "router_prefixes_resolved": {}
+        },
+        "requirements.txt": {}
+      },
+      "frontend_routes": [],
+      "modules": [
+        {
+          "files": [
+            "main.py"
+          ],
+          "framework": "fastapi",
+          "name": "main",
+          "path": "",
+          "type": "backend_module"
+        },
+        {
+          "files": [
+            "requirements.txt"
+          ],
+          "framework": "fastapi",
+          "name": "requirements",
+          "path": "",
+          "type": "backend_module"
+        }
+      ],
+      "mounts": [],
+      "quality_warnings": [],
+      "relationships": [
+        {
+          "from": "main",
+          "to": "GET /users/{user_id}",
+          "type": "EXPOSES_API"
+        },
+        {
+          "from": "main",
+          "to": "from fastapi import FastAPI",
+          "type": "IMPORTS_MODULE"
+        }
+      ],
+      "repositories": [],
+      "routers": [],
+      "services": [],
+      "tech_stack": {
+        "backend": [
+          "fastapi"
+        ],
+        "database": [],
+        "frontend": [],
+        "infrastructure": []
+      }
+    },
+    "repository_type": "backend-service",
+    "risk_analysis": {
+      "blast_radius": "LOCAL",
+      "migration_required": false,
+      "operational_risk": "LOW",
+      "test_scope": [
+        "unit"
+      ]
+    },
+    "schema_analysis": {
+      "models": [],
+      "models_detected": 0,
+      "relationships": []
+    },
+    "search_index": {
+      "apis": [
+        {
+          "controller": "get_user",
+          "endpoint": "GET /users/{user_id}",
+          "method": "GET",
+          "service": ""
+        }
+      ],
+      "modules": [
+        {
+          "dependencies": [
+            "fastapi"
+          ],
+          "file": "main.py",
+          "name": "main",
+          "type": "controller"
+        },
+        {
+          "dependencies": [],
+          "file": "requirements.txt",
+          "name": "requirements",
+          "type": "backend"
+        }
+      ],
+      "references": [
+        {
+          "called_by": [],
+          "calls": [
+            "main.other.get_user"
+          ],
+          "symbol": "API: GET /users/{user_id}"
+        },
+        {
+          "called_by": [
+            "API: GET /users/{user_id}",
+            "GET /users/{user_id}"
+          ],
+          "calls": [],
+          "symbol": "get_user"
+        }
+      ],
+      "symbols": [
+        {
+          "file": "main.py",
+          "line": 4,
+          "module": "main",
+          "name": "get_user",
+          "type": "controller"
+        },
+        {
+          "file": "main.py",
+          "line": 5,
+          "module": "main",
+          "name": "get_user",
+          "type": "function"
+        }
+      ]
+    },
+    "summary": "Analyzed 2 files: 1 endpoints, 0 breaking changes, stack=fastapi",
+    "tech_stack": {
+      "backend_framework": "fastapi",
+      "ci": [],
+      "database": null,
+      "frontend_framework": null,
+      "infra": [],
+      "orm": null
+    }
+  },
+  "schema_version": "epic1-impact/v3",
+  "severity": "PATCH",
+  "statistics": {
+    "major": 0,
+    "minor": 0,
+    "patch": 0,
+    "total_changes": 0
+  },
+  "status": "success",
+  "version": "1.0.0"
+}

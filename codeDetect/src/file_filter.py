@@ -173,21 +173,28 @@ class FileFilter:
         if any(part in FileFilter.IGNORED_DIRS for part in parts):
             return True
 
-        # Keep source-like files constrained to source roots or known entry files.
+        # Suppress build configuration files
+        config_prefixes = (
+            'vite.config', 'webpack.config', 'eslint.config', 'tailwind.config',
+            'jest.config', 'babel.config', 'rollup.config', 'postcss.config',
+            'next.config', 'nuxt.config', 'playwright.config', 'prettier.config',
+            'tsconfig', 'jsconfig'
+        )
+        base_name, _ = os.path.splitext(filename)
+        if any(base_name.startswith(p) for p in config_prefixes):
+            return True
+
         source_exts = {
             '.java', '.js', '.ts', '.py', '.jsx', '.tsx',
             '.go', '.rs', '.rb', '.php', '.c', '.cpp', '.cs',
         }
         if ext in source_exts:
-            in_source_root = any(part in FileFilter.SOURCE_ROOT_DIRS for part in parts[:-1])
-            is_entry = filename in FileFilter.SOURCE_ENTRY_FILES
-            has_domain_suffix = bool(
-                re.search(r"(routes?|controller|service|model|repository)\.(js|ts|jsx|tsx|py|java)$", filename)
-            )
-            if not in_source_root and not is_entry and not has_domain_suffix:
-                return True
+            return False
 
-        return False
+        if ext in FileFilter.ALLOWED_DATA_EXTS:
+            return False
+
+        return True
 
     @staticmethod
     def should_exclude_from_entity_analysis(file_path: str) -> bool:
@@ -199,14 +206,10 @@ class FileFilter:
             return True
 
         normalized = file_path.replace('\\', '/').lower()
-        parts = [p for p in normalized.split('/') if p]
         ext = os.path.splitext(normalized)[1]
         if ext in {'.sql', '.prisma'}:
             return False
-        # Entity extraction only from source roots (or root entry files for small repos).
-        in_source_root = any(part in FileFilter.SOURCE_ROOT_DIRS for part in parts[:-1])
-        is_entry = os.path.basename(normalized) in FileFilter.SOURCE_ENTRY_FILES
-        return not (in_source_root or is_entry)
+        return False
 
     @staticmethod
     def is_known_binary_extension(file_path: str) -> bool:
