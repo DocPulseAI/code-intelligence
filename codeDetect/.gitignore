@@ -16,6 +16,30 @@ env/
 .env
 .env.*
 !.env.example
+
+# Node / Packaging / Build
+node_modules/
+dist/
+build/
+coverage/
+
+# Common editor backups / logs
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Temporary paths
+scratch/
+tmp/
+temp/
+
+# Benchmark outputs
+benchmark_results/
+benchmark_output/
+generated_reports/
+local_reports/
+
 # Generated analysis artifacts
 impact_report_new_user.json
 epic1_report.json
@@ -23,6 +47,10 @@ impact_report.json
 impact_report_*.json
 analyzed_files_*.txt
 *_route_audit.txt
+drift_report.json
+summary_report.json
+verification.json
 
 # Local baseline/output store
 .baseline_store/
+*.md

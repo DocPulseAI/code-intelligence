@@ -35,3 +35,5 @@ def test_golden_file_snapshots(tmp_path):
         search_index = report.get("report", {}).get("search_index")
         assert isinstance(search_index, dict), f"Missing search_index for {case}"
         assert set(search_index.keys()) == {"symbols", "references", "apis", "modules"}
+
+

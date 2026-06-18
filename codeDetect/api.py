@@ -5,8 +5,6 @@ Flask web service for analyzing code changes
 
 import json
 import os
-import tempfile
-import shutil
 import importlib.util
 from pathlib import Path
 from datetime import datetime, timezone
@@ -36,9 +34,16 @@ swagger = Swagger(app, config={
 })
 
 # Configuration
-REPORTS_DIR = Path('/tmp/code-detector-reports')
-REPORTS_DIR.mkdir(exist_ok=True)
 LOG = logging.getLogger("epic1.api")
+
+# analyze/local is disabled in production by default.  Set
+# ANALYZE_LOCAL_ENABLED=true and ANALYZE_LOCAL_ALLOWED_PATHS to a
+# colon-separated list of absolute base paths to enable it.
+ANALYZE_LOCAL_ENABLED: bool = os.getenv("ANALYZE_LOCAL_ENABLED", "false").strip().lower() == "true"
+_raw_allowed_paths = os.getenv("ANALYZE_LOCAL_ALLOWED_PATHS", "").strip()
+ANALYZE_LOCAL_ALLOWED_BASE_PATHS: list[str] = [
+    os.path.abspath(p.strip()) for p in _raw_allowed_paths.split(":") if p.strip()
+]
 
 
 def _int_env(name: str, default: int) -> int:
@@ -104,7 +109,11 @@ def _check_runtime_dependencies() -> dict:
         return ok
 
     tree_sitter_ok = _mark("tree_sitter")
-    tree_sitter_lang_ok = _mark("tree_sitter_languages")
+    tree_sitter_lang_ok = (
+        importlib.util.find_spec("tree_sitter_languages") is not None or
+        importlib.util.find_spec("tree_sitter_language_pack") is not None
+    )
+    checks["tree_sitter_languages"] = {"ok": tree_sitter_lang_ok}
     protobuf_ok = _mark("google.protobuf")
     gitpython_ok = _mark("git")
 
@@ -158,15 +167,10 @@ def _require_json_object():
     return True, data, None
 
 
-def _load_report_from_file() -> Optional[dict]:
-    output_path = os.path.join(os.path.dirname(__file__), 'impact_report.json')
-    if os.path.exists(output_path):
-        try:
-            with open(output_path, 'r') as f:
-                return json.load(f)
-        except json.JSONDecodeError:
-            return None
-    return None
+def _sanitize_token_from_env(env_dict: dict) -> dict:
+    """Return a copy of env_dict with any token values redacted for logging."""
+    sensitive_keys = {"GITHUB_TOKEN_CURRENT_REQUEST", "GITHUB_TOKEN", "EPIC1_INTERNAL_TOKEN"}
+    return {k: ("***" if k in sensitive_keys else v) for k, v in env_dict.items()}
 
 
 def _parse_stdout_report(stdout_text: str) -> Optional[dict]:
@@ -449,13 +453,21 @@ def analyze():
             new_user=new_user,
         )
 
-        # Build command
-        cmd = ['python', 'main.py', repo_url]
-        if github_token:
-            cmd.append(github_token)
-        cmd.append(branch)
+        # Build command — token is injected via environment, never as a CLI argument
+        # so it will never appear in process listings (ps aux, /proc) or audit logs.
+        cmd = ['python', 'main.py', repo_url, branch]
         if new_user:
             cmd.append('--new-user')
+
+        # Build subprocess environment: inherit current env and inject the token
+        # under a well-known key.  The subprocess reads this key at startup and
+        # immediately removes it from the environment so child processes cannot
+        # inherit it further.
+        subprocess_env = os.environ.copy()
+        if github_token:
+            subprocess_env["GITHUB_TOKEN_CURRENT_REQUEST"] = github_token
+        else:
+            subprocess_env.pop("GITHUB_TOKEN_CURRENT_REQUEST", None)
 
         # Run analysis with timeout
         started_at = time.perf_counter()
@@ -464,7 +476,8 @@ def analyze():
             capture_output=True,
             text=True,
             timeout=300,
-            cwd=os.path.dirname(os.path.abspath(__file__))
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            env=subprocess_env,
         )
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
         _log_event(
@@ -480,33 +493,36 @@ def analyze():
         )
 
         if result.returncode != 0:
-            report = _parse_stdout_report(result.stdout) or _load_report_from_file()
+            report = _parse_stdout_report(result.stdout)
             if report and report.get("status") == "error":
                 return _error_response(
                     report.get("stage", "analysis"),
                     report.get("details", result.stderr),
                     bool(report.get("retry_possible", True)),
-                    _load_report_from_file()
                 )
             if report and report.get("error"):
                 return _error_response(
                     "analysis",
                     report.get("error"),
                     False,
-                    _load_report_from_file()
                 )
             return _error_response(
                 "analysis",
                 (result.stderr or "Analysis process exited with non-zero status").strip(),
                 True,
-                report
+                report,
             )
 
-        # Parse JSON output (prefer full stdout, fallback to impact_report.json)
-        report = _parse_stdout_report(result.stdout) or _load_report_from_file()
+        # Parse JSON output from stdout — stdout is the single authoritative source.
+        # We no longer fall back to impact_report.json to avoid cross-request races.
+        report = _parse_stdout_report(result.stdout)
 
         if not report:
-            return _error_response("analysis", "Failed to parse analysis output", True)
+            return _error_response(
+                "analysis",
+                "Failed to parse analysis output — subprocess produced no valid JSON on stdout",
+                True,
+            )
 
         envelope = {
             "run_id": run_id,
@@ -546,7 +562,7 @@ def analyze():
             "Repository analysis timed out",
             request_id=request.environ.get("epic1.request_id"),
         )
-        return _error_response("analysis", "Analysis timeout (> 5 minutes)", True, _load_report_from_file(), 504)
+        return _error_response("analysis", "Analysis timeout (> 5 minutes)", True, None, 504)
     except Exception as e:
         _log_event(
             logging.ERROR,
@@ -555,7 +571,7 @@ def analyze():
             request_id=request.environ.get("epic1.request_id"),
             error=str(e),
         )
-        return _error_response("analysis", str(e), True, _load_report_from_file())
+        return _error_response("analysis", str(e), True, None)
 
 @app.route('/analyze/local', methods=['POST'])
 def analyze_local():
@@ -586,21 +602,22 @@ def analyze_local():
     responses:
       200:
         description: Analysis successful
-        schema:
-          type: object
-          properties:
-            status:
-              type: string
-              example: success
-            report:
-              type: object
       400:
         description: Invalid input
+      403:
+        description: Endpoint disabled or path not permitted
       404:
         description: Path not found
       500:
         description: Internal server error
     """
+    # Security gate: disabled in production unless explicitly opted in via env.
+    if not ANALYZE_LOCAL_ENABLED:
+        return jsonify({
+            "error": "analyze/local is disabled in this environment",
+            "hint": "Set ANALYZE_LOCAL_ENABLED=true and ANALYZE_LOCAL_ALLOWED_PATHS to enable it",
+        }), 403
+
     try:
         ok, data, error = _require_json_object()
         if not ok:
@@ -623,10 +640,33 @@ def analyze_local():
             return jsonify({"error": "repo_path is required"}), 400
         repo_path = repo_path.strip()
 
-        if not os.path.exists(repo_path):
+        # Resolve symlinks and normalize to absolute path before any check.
+        resolved_path = os.path.realpath(os.path.abspath(repo_path))
+
+        # Path traversal / allowlist enforcement.
+        if ANALYZE_LOCAL_ALLOWED_BASE_PATHS:
+            if not any(
+                resolved_path == allowed or resolved_path.startswith(allowed + os.sep)
+                for allowed in ANALYZE_LOCAL_ALLOWED_BASE_PATHS
+            ):
+                _log_event(
+                    logging.WARNING,
+                    "EPIC1_LOCAL_ANALYZE_PATH_DENIED",
+                    "Local analysis path rejected — not in allowlist",
+                    request_id=request.environ.get("epic1.request_id"),
+                    resolved_path=resolved_path,
+                )
+                return jsonify({
+                    "error": "Repository path is not within a permitted base path",
+                }), 403
+
+        if not os.path.exists(resolved_path):
             return jsonify({"error": "Repository path does not exist"}), 404
-        if not os.path.isdir(repo_path):
+        if not os.path.isdir(resolved_path):
             return jsonify({"error": "repo_path must be a directory"}), 400
+
+        # Replace user-supplied path with the validated, resolved path.
+        repo_path = resolved_path
 
         request_id = request.environ.get("epic1.request_id")
         trace_id = data.get("trace_id")
@@ -666,10 +706,13 @@ def analyze_local():
             new_user=new_user,
         )
 
-        # Build command
+        # Build command — local analysis never needs a GitHub token
         cmd = ['python', 'main.py', repo_path]
         if new_user:
             cmd.append('--new-user')
+
+        subprocess_env = os.environ.copy()
+        subprocess_env.pop("GITHUB_TOKEN_CURRENT_REQUEST", None)
 
         # Run analysis
         started_at = time.perf_counter()
@@ -678,7 +721,8 @@ def analyze_local():
             capture_output=True,
             text=True,
             timeout=300,
-            cwd=os.path.dirname(os.path.abspath(__file__))
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            env=subprocess_env,
         )
         duration_ms = round((time.perf_counter() - started_at) * 1000, 2)
         _log_event(
@@ -694,33 +738,34 @@ def analyze_local():
         )
 
         if result.returncode != 0:
-            report = _parse_stdout_report(result.stdout) or _load_report_from_file()
+            report = _parse_stdout_report(result.stdout)
             if report and report.get("status") == "error":
                 return _error_response(
                     report.get("stage", "analysis"),
                     report.get("details", result.stderr),
                     bool(report.get("retry_possible", True)),
-                    _load_report_from_file()
                 )
             if report and report.get("error"):
                 return _error_response(
                     "analysis",
                     report.get("error"),
                     False,
-                    _load_report_from_file()
                 )
             return _error_response(
                 "analysis",
                 (result.stderr or "Analysis process exited with non-zero status").strip(),
                 True,
-                report
+                report,
             )
 
-        # Parse JSON output (prefer full stdout, fallback to impact_report.json)
-        report = _parse_stdout_report(result.stdout) or _load_report_from_file()
+        report = _parse_stdout_report(result.stdout)
 
         if not report:
-            return _error_response("analysis", "Failed to parse analysis output", True)
+            return _error_response(
+                "analysis",
+                "Failed to parse local analysis output — subprocess produced no valid JSON on stdout",
+                True,
+            )
 
         envelope = {
             "run_id": run_id,
@@ -760,7 +805,7 @@ def analyze_local():
             "Local repository analysis timed out",
             request_id=request.environ.get("epic1.request_id"),
         )
-        return _error_response("analysis", "Analysis timeout (> 5 minutes)", True, _load_report_from_file(), 504)
+        return _error_response("analysis", "Analysis timeout (> 5 minutes)", True, None, 504)
     except Exception as e:
         _log_event(
             logging.ERROR,
@@ -769,7 +814,7 @@ def analyze_local():
             request_id=request.environ.get("epic1.request_id"),
             error=str(e),
         )
-        return _error_response("analysis", str(e), True, _load_report_from_file())
+        return _error_response("analysis", str(e), True, None)
 
 @app.errorhandler(404)
 def not_found(e):

@@ -8,7 +8,10 @@ from typing import Dict, List, Optional, Any
 
 # Try to import tree-sitter, fall back to regex if unavailable
 try:
-    import tree_sitter_languages
+    try:
+        import tree_sitter_languages
+    except ImportError:
+        import tree_sitter_language_pack as tree_sitter_languages
     from tree_sitter import Parser, Language, Node
     _TREE_SITTER_IMPORT_OK = True
 except ImportError:
@@ -157,7 +160,10 @@ class TreeSitterEngine:
             return result
 
         try:
-            self.parser.set_language(language)
+            if hasattr(self.parser, "set_language"):
+                self.parser.set_language(language)
+            else:
+                self.parser.language = language
             tree = self.parser.parse(bytes(code, 'utf-8'))
 
             # Check for errors but continue

@@ -1,11 +1,31 @@
+# OS and IDE files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
 
-# Python
+# Python caches and compiler files
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+codeDetect/src/parsers/__pycache__/
+codeDetect/tests/__pycache__/
+
+# Virtual Environment and local files
+venv/
+.venv/
 env/
+.env
+.env.*
+!.env.example
+
+# Build and package files
 build/
 develop-eggs/
 dist/
@@ -21,31 +41,30 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+node_modules/
 
-# Virtual Environment
-venv/
-.env
+# OS and logs
+*.log
+*.tmp
+*.bak
+*.swp
 
-# IntelliJ/PyCharm
-.idea/
-
-# VS Code
-.vscode/
-
-# OS
-.DS_Store/
-.DS_Store
-
-# Build artifacts
-codeDetect/src/parsers/__pycache__/
-codeDetect/tests/__pycache__/
-impact_report.json
+# Workspace temp / scratch directories
+scratch/
+tmp/
+temp/
 results/
 /audit_runs
 /audit_repos
 /audit_outputs
-# Reports
 reports/
-*.log
-
 audit_runs/repos/
+
+# Benchmark and report files
+benchmark_results/
+benchmark_output/
+generated_reports/
+local_reports/
+impact_report.json
+drift_report.json
+summary_report.json

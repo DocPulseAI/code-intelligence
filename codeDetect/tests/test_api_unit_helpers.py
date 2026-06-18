@@ -15,7 +15,6 @@ if "flasgger" not in sys.modules:
 
 from api import (
     app,
-    _load_report_from_file,
     _parse_boolean_field,
     _parse_stdout_report,
     _require_json_object,
@@ -75,38 +74,4 @@ def test_parse_stdout_report_handles_valid_and_invalid_json():
     assert _parse_stdout_report("   ") is None
 
 
-def test_load_report_from_file_reads_valid_json(monkeypatch):
-    monkeypatch.setattr("api.os.path.exists", lambda _path: True)
-    sample_json = '{"analysis": "ok"}'
 
-    class _DummyFile:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return sample_json
-
-    monkeypatch.setattr("builtins.open", lambda *_args, **_kwargs: _DummyFile())
-
-    assert _load_report_from_file() == {"analysis": "ok"}
-
-
-def test_load_report_from_file_returns_none_on_decode_error(monkeypatch):
-    monkeypatch.setattr("api.os.path.exists", lambda _path: True)
-
-    class _DummyFile:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return "{invalid-json}"
-
-    monkeypatch.setattr("builtins.open", lambda *_args, **_kwargs: _DummyFile())
-
-    assert _load_report_from_file() is None
