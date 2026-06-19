@@ -74,4 +74,10 @@ def test_parse_stdout_report_handles_valid_and_invalid_json():
     assert _parse_stdout_report("   ") is None
 
 
+def test_parse_stdout_report_handles_garbage_before_json():
+    stdout_text = "Cloning repository...\nFetching objects...\n{\"ok\": true}"
+    assert _parse_stdout_report(stdout_text) == {"ok": True}
+
+
+
 

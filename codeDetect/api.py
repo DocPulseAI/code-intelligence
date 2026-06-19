@@ -57,7 +57,7 @@ def _int_env(name: str, default: int) -> int:
 
 
 LOG_BODY_MAX_CHARS = max(200, _int_env("EPIC1_LOG_BODY_MAX_CHARS", 1200))
-EPIC1_INTERNAL_TOKEN = os.getenv("EPIC1_INTERNAL_TOKEN", "").strip()
+EPIC1_INTERNAL_TOKEN = (os.getenv("EPIC1_INTERNAL_TOKEN") or os.getenv("EPIC_INTERNAL_TOKEN") or "").strip()
 
 
 def _configure_logging() -> None:
@@ -174,13 +174,24 @@ def _sanitize_token_from_env(env_dict: dict) -> dict:
 
 
 def _parse_stdout_report(stdout_text: str) -> Optional[dict]:
-    text = stdout_text.strip()
-    if not text:
+    if not stdout_text:
         return None
+    # Try parsing the whole stdout first
     try:
-        return json.loads(text)
+        return json.loads(stdout_text.strip())
     except json.JSONDecodeError:
-        return None
+        pass
+
+    # Fallback: scan lines from the bottom to find the first line containing valid JSON
+    lines = stdout_text.splitlines()
+    for line in reversed(lines):
+        trimmed = line.strip()
+        if (trimmed.startswith("{") and trimmed.endswith("}")) or (trimmed.startswith("[") and trimmed.endswith("]")):
+            try:
+                return json.loads(trimmed)
+            except json.JSONDecodeError:
+                pass
+    return None
 
 
 def _error_response(stage: str,
