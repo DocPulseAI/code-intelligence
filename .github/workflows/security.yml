@@ -1,0 +1,112 @@
+name: Security Scan
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  gitleaks:
+    name: Gitleaks Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Gitleaks
+        run: |
+          VERSION="8.18.2"
+          curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" | tar -xz
+          sudo mv gitleaks /usr/local/bin/
+
+      - name: Run Gitleaks
+        run: gitleaks detect --source . -v --redact
+
+  npm-audit:
+    name: Node Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for package.json
+        id: check_files
+        run: |
+          if [ -f package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Node.js
+        if: steps.check_files.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Audit Node Dependencies
+        if: steps.check_files.outputs.exists == 'true'
+        run: |
+          npm audit --audit-level=critical
+
+  pip-audit:
+    name: Python Dependency Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Check for requirements files
+        id: check_files
+        run: |
+          reqs=$(find . -name "requirements.txt" -o -name "*requirements.txt" | grep -v "node_modules" | grep -v "\.venv" | grep -v "\.git" || true)
+          if [ -n "$reqs" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Setup Python
+        if: steps.check_files.outputs.exists == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install pip-audit
+        if: steps.check_files.outputs.exists == 'true'
+        run: |
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+      - name: Find and Audit Python Dependencies
+        if: steps.check_files.outputs.exists == 'true'
+        run: |
+          find . -name "requirements.txt" -o -name "*requirements.txt" | while read req; do
+            if [[ "$req" == *"node_modules"* || "$req" == *".venv"* || "$req" == *".git"* ]]; then
+              continue
+            fi
+            echo "Scanning dependencies in $req..."
+            pip-audit -r "$req"
+          done
+
+  trivy:
+    name: Container & Filesystem Vulnerability Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy fs scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL'
+          format: 'table'
