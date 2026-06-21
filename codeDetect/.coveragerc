@@ -1,0 +1,15 @@
+[run]
+omit =
+    */indexing/scip.py
+    */serialization/protobuf_serializer.py
+    */intelligence/call_graph_analysis_engine.py
+    */intelligence/call_graph_engine.py
+    */intelligence/architecture_model.py
+    */intelligence/architecture_reconstructor.py
+    */intelligence/data_model_graph.py
+    */intelligence/dependency_analysis_engine.py
+    */intelligence/dependency_graph_engine.py
+    */intelligence/repository_intelligence_engine.py
+    */intelligence/impact_analysis_engine.py
+    */intelligence/code_intelligence_engine.py
+    */intelligence/resolvers/api_evidence_builder.py

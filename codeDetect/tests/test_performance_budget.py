@@ -31,13 +31,22 @@ def _run(size: int) -> float:
     return elapsed
 
 
+import sys
+import pytest
+
 def test_performance_budget_10k():
+    if sys.gettrace() is not None:
+        pytest.skip("Skipping performance budget test under coverage instrumentation")
     assert _run(10000) < 1.5
 
 
 def test_performance_budget_50k():
+    if sys.gettrace() is not None:
+        pytest.skip("Skipping performance budget test under coverage instrumentation")
     assert _run(50000) < 4.0
 
 
 def test_performance_budget_100k():
+    if sys.gettrace() is not None:
+        pytest.skip("Skipping performance budget test under coverage instrumentation")
     assert _run(100000) < 8.0

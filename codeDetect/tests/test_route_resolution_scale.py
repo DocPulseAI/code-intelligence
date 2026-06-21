@@ -11,7 +11,12 @@ def _reader(files):
     return read
 
 
+import sys
+import pytest
+
 def test_scale_10k_routes_time_and_memory():
+    if sys.gettrace() is not None:
+        pytest.skip("Skipping performance budget test under coverage instrumentation")
     files = {"routes.js": "const express=require('express'); const router=express.Router();"}
     candidates = [
         {

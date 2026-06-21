@@ -1,0 +1,30 @@
+name: Python Service CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-asyncio pytest-cov httpx pydantic fastapi gunicorn flask
+        if [ -f codeDetect/requirements.txt ]; then pip install -r codeDetect/requirements.txt; fi
+
+    - name: Run tests
+      run: |
+        PYTHONPATH=codeDetect/src:codeDetect/worker:codeDetect pytest codeDetect --maxfail=1 --cov=codeDetect/src --cov-config=codeDetect/.coveragerc --cov-fail-under=70
