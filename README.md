@@ -1,97 +1,34 @@
-# Code Change Detector
+# Code Intelligence Module
 
-Automated code change analysis tool that generates detailed impact reports from Git repositories.
+This module houses the AST parsing, Git repository analytics, and code intelligence engines of the DocPulseAI organization. The primary deployable service within this module is **codeDetect**.
 
-## Features
+## Purpose
+- **Business Purpose**: Support automated code documentation pipeline (DocPulseAI) by analyzing Git repositories and extracting precise code change footprints.
+- **Technical Purpose**: Host the source libraries and container definitions for the code change intelligence component, linking repository diffs to AST syntax checks.
 
-- **Smart Change Detection** - Analyzes code changes using Git diffs and AST parsing
-- **GitHub Integration** - Works with both local repos and remote GitHub repositories
-- **Token Authentication** - Secure access to private repositories
-- **Detailed Analysis** - Extracts functions, components, APIs, and dependencies
-- **Severity Scoring** - Automatic severity assessment (PATCH/MINOR/MAJOR)
-- **Breaking Change Detection** - Identifies potential breaking changes
-- **Complexity Metrics** - Calculates code complexity scores
+## Structure and Workspace Mapping
+This module contains:
+1. **codeDetect** (sub-folder): The Flask API service and command line executor.
+2. **Dockerfile**: The containerization file configured with Git and Python dependencies.
+3. **render.yaml**: Infrastructure-as-code declaration for deployment.
 
-## Usage
+For detailed information on local setup, CLI usage, endpoint schemas, environment configuration, and test suites, please see the sub-service README:
+👉 **[codeDetect Service README (codeDetect/README.md)](file:///Users/kireeti/Desktop/Projects/DocPulseAI/code-intelligence/codeDetect/README.md)**
 
-### Analyze Local Repository
+## Component Matrix
+
+| Sub-Component | Tech Stack | Target Location | Purpose |
+|---|---|---|---|
+| **codeDetect Engine** | Python 3.11, Tree-sitter | `codeDetect/` | Core AST extraction & Git diff parsing |
+| **Gunicorn Daemon** | Python WSGI | `codeDetect/gunicorn.conf.py` | Web server gateway execution |
+
+---
+
+## Deployment & Docker Integration
+The root Dockerfile in this directory compiles `codeDetect` into a production-ready container:
 ```bash
-python codeDetect/main.py /path/to/local/repo
+# From code-intelligence/ directory
+docker build -t docpulse/codedetect -f Dockerfile .
 ```
 
-### Analyze GitHub Repository
-
-```bash
-export GITHUB_TOKEN=your_github_personal_access_token
-python codeDetect/main.py https://github.com/owner/repo
-```
-
-### Start API Service
-```bash
-python codeDetect/api.py
-```
-The API will be available at `http://localhost:5000`.
-
-## Runtime Modes
-
-- **CLI**: `python codeDetect/main.py <repo_url_or_local_path> [github_token] [branch] [--new-user]`
-- **HTTP API**: `python codeDetect/api.py` for EPIC-1 service integration.
-
-## Output
-
-The tool generates `codeDetect/impact_report.json` with detailed analysis of the changes, including:
-- Metadata about the commit and repository.
-- Summary of analysis (total files, highest severity).
-- Detailed changes per file with extracted features and complexity scores.
-
-## Supported Languages
-
-- JavaScript/TypeScript (.js, .jsx, .ts, .tsx)
-- Java (.java)
-- Python (.py)
-
-## API Endpoints
-
-The service provides REST API endpoints for analysis:
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| GET | `/health/dependencies` | Runtime dependency and process-pool status |
-| POST | `/analyze` | Analyze GitHub repository |
-| POST | `/analyze/local` | Analyze local repository |
-
-**Example API Request:**
-```bash
-curl -X POST http://localhost:5000/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-    "repo_url": "https://github.com/owner/repo",
-    "branch": "main"
-  }'
-```
-
-For requirements, please install dependencies:
-```bash
-pip install -r codeDetect/requirements.txt
-```
-
-## Observability
-
-EPIC-1 API emits structured JSON logs with:
-
-- request lifecycle (`EPIC1_HTTP_REQUEST_START` / `EPIC1_HTTP_REQUEST_END`)
-- subprocess execution metrics for analysis calls (return code, duration, stderr preview)
-- startup dependency diagnostics (`EPIC1_DEPENDENCY_CHECK`)
-
-Every response includes an `X-Request-Id` header so API calls can be correlated end-to-end.
-
-### Logging Controls
-
-- `EPIC1_LOG_BODY_MAX_CHARS` (default `1200`): max stderr/body preview length included in logs.
-
-## Troubleshooting
-
-1. `GET /health/dependencies` returns `503` when runtime dependencies are degraded.
-2. For failed analysis responses, check `stage`, `details`, and `retry_possible` in the API payload.
-3. Match API failures with logs using `X-Request-Id` to identify the exact subprocess failure and stderr preview.
+*Note: Ensure that any Docker build commands use the root `code-intelligence` directory as the build context, rather than the `codeDetect` sub-directory, to maintain correct module inclusion paths.*
