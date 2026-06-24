@@ -128,7 +128,7 @@ sequenceDiagram
 ## Directory Structure
 
 ```
-code-intelligence/codeDetect/
+code-intelligence/
 ├── pipeline/               # Custom data ingestion pipelines
 ├── queries/                # Tree-sitter query files for language symbol matching
 ├── schemas/                # Pydantic schemas validating inputs and reports
@@ -170,8 +170,8 @@ code-intelligence/codeDetect/
 ### Setup
 
 ```bash
-# Navigate to the codeDetect directory
-cd code-intelligence/codeDetect
+# Navigate to the repository
+cd code-intelligence
 
 # Create and activate virtual environment
 python -m venv .venv
