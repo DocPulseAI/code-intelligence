@@ -1,0 +1,10 @@
+# Ignore historical credentials in Dashboard/Backend files inside codeDetect
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/QUICK_START.md:generic-api-key:74
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/QUICK_START.md:hashicorp-tf-password:67
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/QUICK_START.md:hashicorp-tf-password:126
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/QUICK_START.md:hashicorp-tf-password:206
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/README.md:generic-api-key:122
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/README.md:hashicorp-tf-password:115
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/README.md:hashicorp-tf-password:207
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/IMPROVEMENTS.md:generic-api-key:231
+fcadc7aaeb9dccd50fc67f3a7e5aa8d3df51467e:Dashboard/Backend/src/main/resources/application.properties:generic-api-key:13
