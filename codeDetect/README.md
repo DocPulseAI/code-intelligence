@@ -283,7 +283,7 @@ graph TD
 
 ## Deployment
 
-Deployable via **Render** (configured via `service.yaml`) or on **Azure Container Apps**.
+Deployable via **Render** (configured via `service.yaml`) or any Docker-compatible hosting platform.
 
 - **Dependency Health**: Endpoint `/health/dependencies` verifies Tree-sitter compilers and virtual memory pools.
 - **Git Client**: Git is installed within the Docker runtime to support GitPython operations.
