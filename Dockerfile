@@ -9,11 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies first to preserve layer caching.
-COPY codeDetect/requirements.txt .
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt flask gunicorn
 
-# Copy the application from the repo subdirectory into the runtime image.
-COPY codeDetect/ .
+# Copy the application from the repo into the runtime image.
+COPY . .
 
 # Ensure non-root nobody user owns the app directory
 RUN chown -R nobody:nogroup /app

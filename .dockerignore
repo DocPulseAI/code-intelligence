@@ -17,10 +17,10 @@ venv/
 env/
 
 # Runtime image does not need these repo assets
-codeDetect/tests/
-codeDetect/reports/
-codeDetect/PROJECT_STATUS.md
-codeDetect/.baseline_store/
-codeDetect/impact_report*.json
-codeDetect/analyzed_files*.txt
-codeDetect/*_route_audit.txt
+tests/
+reports/
+PROJECT_STATUS.md
+.baseline_store/
+impact_report*.json
+analyzed_files*.txt
+*_route_audit.txt
