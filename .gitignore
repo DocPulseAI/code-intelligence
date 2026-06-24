@@ -14,8 +14,6 @@ __pycache__/
 .mypy_cache/
 .coverage
 htmlcov/
-codeDetect/src/parsers/__pycache__/
-codeDetect/tests/__pycache__/
 
 # Virtual Environment and local files
 venv/
@@ -68,3 +66,12 @@ local_reports/
 impact_report.json
 drift_report.json
 summary_report.json
+
+# Local baseline/output store and test generation artifacts
+.baseline_store/
+impact_report_new_user.json
+epic1_report.json
+impact_report_*.json
+analyzed_files_*.txt
+*_route_audit.txt
+verification.json
